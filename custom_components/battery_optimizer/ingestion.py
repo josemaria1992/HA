@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from datetime import datetime, timedelta
+from datetime import date, datetime, timedelta
 import logging
 from typing import Any
 
@@ -255,6 +255,100 @@ def _extract_numeric_list(state: State) -> list[float]:
         if isinstance(raw, list):
             return _coerce_price_values(raw)
     return []
+
+
+def build_price_comparison(hass: HomeAssistant, entity_id: str) -> dict[str, dict[str, Any]]:
+    """Build raw and hourly-average price series for dashboard plotting."""
+
+    state = hass.states.get(entity_id)
+    if state is None:
+        return {}
+
+    today = dt_util.now().date()
+    tomorrow = today + timedelta(days=1)
+    return {
+        "today": _build_price_day(state, ("raw_today", "today", "prices_today"), today),
+        "tomorrow": _build_price_day(state, ("raw_tomorrow", "tomorrow", "prices_tomorrow"), tomorrow),
+    }
+
+
+def _build_price_day(state: State, attrs: tuple[str, ...], day: date) -> dict[str, Any]:
+    raw: Any = None
+    for attr in attrs:
+        if attr in state.attributes:
+            raw = state.attributes[attr]
+            break
+    if not isinstance(raw, list) or not raw:
+        return {
+            "date": day.isoformat(),
+            "source_interval_minutes": None,
+            "quarter_hours": [],
+            "hourly_average": [],
+        }
+
+    values = _coerce_price_values(raw)
+    interval_minutes = _infer_single_day_source_interval_minutes(values)
+    quarter_hours = _coerce_timed_price_values(raw, day, interval_minutes)
+    hourly_average = _hourly_average_points(quarter_hours)
+    return {
+        "date": day.isoformat(),
+        "source_interval_minutes": interval_minutes,
+        "quarter_hours": quarter_hours,
+        "hourly_average": hourly_average,
+    }
+
+
+def _coerce_timed_price_values(raw: list[Any], day: date, interval_minutes: int) -> list[dict[str, Any]]:
+    points: list[dict[str, Any]] = []
+    base = datetime.combine(day, datetime.min.time()).replace(tzinfo=dt_util.DEFAULT_TIME_ZONE)
+    for index, item in enumerate(raw):
+        start = None
+        price = None
+        if isinstance(item, dict):
+            for time_key in ("start", "start_time", "time", "datetime"):
+                if time_key in item:
+                    start = dt_util.parse_datetime(str(item[time_key]))
+                    break
+            for price_key in ("value", "price", "total"):
+                if price_key in item:
+                    price = item[price_key]
+                    break
+        else:
+            price = item
+        if start is None:
+            start = base + timedelta(minutes=index * interval_minutes)
+        if start.tzinfo is None:
+            start = dt_util.as_local(start)
+        else:
+            start = dt_util.as_local(start)
+        if price is None:
+            continue
+        points.append({"time": start.isoformat(), "price": round(float(price), 5)})
+    return points
+
+
+def _hourly_average_points(points: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    buckets: dict[datetime, list[float]] = {}
+    for point in points:
+        parsed = dt_util.parse_datetime(point["time"])
+        if parsed is None:
+            continue
+        parsed = dt_util.as_local(parsed)
+        hour = parsed.replace(minute=0, second=0, microsecond=0)
+        buckets.setdefault(hour, []).append(float(point["price"]))
+    return [
+        {"time": hour.isoformat(), "price": round(sum(values) / len(values), 5)}
+        for hour, values in sorted(buckets.items())
+        if values
+    ]
+
+
+def _infer_single_day_source_interval_minutes(values: list[float]) -> int:
+    if len(values) >= 72:
+        return 15
+    if len(values) >= 36:
+        return 30
+    return 60
 
 
 def _infer_source_interval_minutes(values: list[float]) -> int:

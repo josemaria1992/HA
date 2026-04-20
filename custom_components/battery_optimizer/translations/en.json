@@ -69,6 +69,8 @@
       "daily_savings": { "name": "Daily savings" },
       "daily_energy_without_battery": { "name": "Daily energy without battery" },
       "daily_energy_with_battery": { "name": "Daily energy with battery" },
+      "price_today_comparison": { "name": "Price today comparison" },
+      "price_tomorrow_comparison": { "name": "Price tomorrow comparison" },
       "cheapest_charge_windows": { "name": "Cheapest charge windows" },
       "best_discharge_windows": { "name": "Best discharge windows" },
       "upcoming_charge_hours": { "name": "Upcoming charge hours" },

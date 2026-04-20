@@ -11,9 +11,11 @@ from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 from homeassistant.helpers.update_coordinator import CoordinatorEntity
+from homeassistant.util import dt as dt_util
 
 from .const import ATTR_PLAN, ATTR_REASONS, ATTR_WINDOWS, DOMAIN
 from .coordinator import BatteryOptimizerCoordinator, get_coordinator
+from .ingestion import build_price_comparison
 from .optimizer import BatteryMode
 
 
@@ -94,6 +96,20 @@ SENSORS: tuple[BatteryOptimizerSensorDescription, ...] = (
         attrs_fn=lambda coordinator: _daily_attrs(coordinator),
     ),
     BatteryOptimizerSensorDescription(
+        key="price_today_comparison",
+        translation_key="price_today_comparison",
+        native_unit_of_measurement="SEK/kWh",
+        value_fn=lambda coordinator: _price_comparison_value(coordinator, "today"),
+        attrs_fn=lambda coordinator: _price_comparison_attrs(coordinator, "today"),
+    ),
+    BatteryOptimizerSensorDescription(
+        key="price_tomorrow_comparison",
+        translation_key="price_tomorrow_comparison",
+        native_unit_of_measurement="SEK/kWh",
+        value_fn=lambda coordinator: _price_comparison_value(coordinator, "tomorrow"),
+        attrs_fn=lambda coordinator: _price_comparison_attrs(coordinator, "tomorrow"),
+    ),
+    BatteryOptimizerSensorDescription(
         key="cheapest_charge_windows",
         translation_key="cheapest_charge_windows",
         value_fn=lambda coordinator: len(coordinator.data.cheapest_charge_windows) if coordinator.data else None,
@@ -169,7 +185,11 @@ class BatteryOptimizerSensor(CoordinatorEntity[BatteryOptimizerCoordinator], Sen
 
     @property
     def available(self) -> bool:
-        if self.entity_description.key == "last_command" or self.entity_description.key.startswith("daily_"):
+        if (
+            self.entity_description.key == "last_command"
+            or self.entity_description.key.startswith("daily_")
+            or self.entity_description.key.startswith("price_")
+        ):
             return True
         return bool(self.coordinator.data and self.coordinator.data.valid)
 
@@ -268,3 +288,35 @@ def _daily_attrs(coordinator: BatteryOptimizerCoordinator) -> dict[str, Any]:
         "currency": "SEK",
         "method": "Baseline uses live load power. Actual uses positive grid import from the three phase power sensors. Both are multiplied by the current hourly average price.",
     }
+
+
+def _price_comparison_value(coordinator: BatteryOptimizerCoordinator, day_key: str) -> float | None:
+    day = _price_comparison_day(coordinator, day_key)
+    hourly = day.get("hourly_average") or []
+    if not hourly:
+        return None
+    if day_key == "today":
+        now_hour = dt_util.now().replace(minute=0, second=0, microsecond=0)
+        for point in hourly:
+            point_time = dt_util.parse_datetime(point["time"])
+            if point_time and dt_util.as_local(point_time).replace(minute=0, second=0, microsecond=0) == now_hour:
+                return point["price"]
+    return hourly[0]["price"]
+
+
+def _price_comparison_attrs(coordinator: BatteryOptimizerCoordinator, day_key: str) -> dict[str, Any]:
+    day = _price_comparison_day(coordinator, day_key)
+    return {
+        "date": day.get("date"),
+        "source_interval_minutes": day.get("source_interval_minutes"),
+        "quarter_hours": day.get("quarter_hours", []),
+        "hourly_average": day.get("hourly_average", []),
+        "note": "quarter_hours is the raw Nord Pool series; hourly_average is the supplier-billing average used by the optimizer.",
+    }
+
+
+def _price_comparison_day(coordinator: BatteryOptimizerCoordinator, day_key: str) -> dict[str, Any]:
+    price_entity = coordinator.config.get("price_entity")
+    if not price_entity:
+        return {}
+    return build_price_comparison(coordinator.hass, price_entity).get(day_key, {})

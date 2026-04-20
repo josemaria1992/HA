@@ -103,6 +103,8 @@ Created entities include:
 - `sensor.battery_optimizer_daily_savings`
 - `sensor.battery_optimizer_daily_energy_without_battery`
 - `sensor.battery_optimizer_daily_energy_with_battery`
+- `sensor.battery_optimizer_price_today_comparison`
+- `sensor.battery_optimizer_price_tomorrow_comparison`
 - `sensor.battery_optimizer_upcoming_charge_hours`
 - `sensor.battery_optimizer_upcoming_discharge_hours`
 - `sensor.battery_optimizer_cheapest_charge_windows`
@@ -167,6 +169,64 @@ cards:
         name: Current SOC
       - entity: sensor.battery_optimizer_projected_soc
         name: Projected SOC
+
+  # Requires ApexCharts Card from HACS.
+  # This plots future Nord Pool attributes, which the built-in history graph cannot do.
+  - type: custom:apexcharts-card
+    header:
+      show: true
+      title: Nord Pool Raw vs Hourly Average
+    graph_span: 2d
+    span:
+      start: day
+    now:
+      show: true
+      label: Now
+    yaxis:
+      - id: price
+        decimals: 3
+    apex_config:
+      stroke:
+        width: 2
+      legend:
+        show: true
+    series:
+      - entity: sensor.battery_optimizer_price_today_comparison
+        name: Today raw Nord Pool
+        yaxis_id: price
+        type: line
+        curve: stepline
+        data_generator: |
+          return entity.attributes.quarter_hours.map((point) => {
+            return [new Date(point.time).getTime(), point.price];
+          });
+      - entity: sensor.battery_optimizer_price_today_comparison
+        name: Today hourly average
+        yaxis_id: price
+        type: line
+        curve: stepline
+        data_generator: |
+          return entity.attributes.hourly_average.map((point) => {
+            return [new Date(point.time).getTime(), point.price];
+          });
+      - entity: sensor.battery_optimizer_price_tomorrow_comparison
+        name: Tomorrow raw Nord Pool
+        yaxis_id: price
+        type: line
+        curve: stepline
+        data_generator: |
+          return entity.attributes.quarter_hours.map((point) => {
+            return [new Date(point.time).getTime(), point.price];
+          });
+      - entity: sensor.battery_optimizer_price_tomorrow_comparison
+        name: Tomorrow hourly average
+        yaxis_id: price
+        type: line
+        curve: stepline
+        data_generator: |
+          return entity.attributes.hourly_average.map((point) => {
+            return [new Date(point.time).getTime(), point.price];
+          });
 
   - type: entities
     title: Daily Savings So Far
