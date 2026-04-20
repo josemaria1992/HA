@@ -45,6 +45,12 @@ class BatteryOptimizerCoordinator(DataUpdateCoordinator[OptimizationResult | Non
         self.daily_energy_without_battery_kwh = 0.0
         self.daily_energy_with_battery_kwh = 0.0
         self.daily_date = dt_util.now().date()
+        self.monthly_cost_without_battery = 0.0
+        self.monthly_cost_with_battery = 0.0
+        self.monthly_savings = 0.0
+        self.monthly_energy_without_battery_kwh = 0.0
+        self.monthly_energy_with_battery_kwh = 0.0
+        self.month_key = _month_key(dt_util.now().date())
         self._last_daily_sample: datetime | None = None
         self._store = Store[dict[str, Any]](hass, STORE_VERSION, f"{DOMAIN}_{entry.entry_id}_daily")
         self._previous_mode: BatteryMode | None = None
@@ -66,14 +72,19 @@ class BatteryOptimizerCoordinator(DataUpdateCoordinator[OptimizationResult | Non
             return
         today = dt_util.now().date()
         stored_date = _parse_date(stored.get("date"))
-        if stored_date != today:
-            return
-        self.daily_date = today
-        self.daily_cost_without_battery = float(stored.get("cost_without_battery", 0))
-        self.daily_cost_with_battery = float(stored.get("cost_with_battery", 0))
-        self.daily_savings = float(stored.get("savings", 0))
-        self.daily_energy_without_battery_kwh = float(stored.get("energy_without_battery_kwh", 0))
-        self.daily_energy_with_battery_kwh = float(stored.get("energy_with_battery_kwh", 0))
+        if stored_date == today:
+            self.daily_date = today
+            self.daily_cost_without_battery = float(stored.get("cost_without_battery", 0))
+            self.daily_cost_with_battery = float(stored.get("cost_with_battery", 0))
+            self.daily_savings = float(stored.get("savings", 0))
+            self.daily_energy_without_battery_kwh = float(stored.get("energy_without_battery_kwh", 0))
+            self.daily_energy_with_battery_kwh = float(stored.get("energy_with_battery_kwh", 0))
+        if stored.get("month") == self.month_key:
+            self.monthly_cost_without_battery = float(stored.get("monthly_cost_without_battery", 0))
+            self.monthly_cost_with_battery = float(stored.get("monthly_cost_with_battery", 0))
+            self.monthly_savings = float(stored.get("monthly_savings", 0))
+            self.monthly_energy_without_battery_kwh = float(stored.get("monthly_energy_without_battery_kwh", 0))
+            self.monthly_energy_with_battery_kwh = float(stored.get("monthly_energy_with_battery_kwh", 0))
 
     async def _async_update_data(self) -> OptimizationResult | None:
         input_data, status = self.ingestor.build_input(self._previous_mode, self._previous_mode_intervals)
@@ -170,6 +181,14 @@ class BatteryOptimizerCoordinator(DataUpdateCoordinator[OptimizationResult | Non
             self.daily_energy_without_battery_kwh = 0.0
             self.daily_energy_with_battery_kwh = 0.0
             self._last_daily_sample = None
+        current_month = _month_key(today)
+        if current_month != self.month_key:
+            self.month_key = current_month
+            self.monthly_cost_without_battery = 0.0
+            self.monthly_cost_with_battery = 0.0
+            self.monthly_savings = 0.0
+            self.monthly_energy_without_battery_kwh = 0.0
+            self.monthly_energy_with_battery_kwh = 0.0
 
         if self._last_daily_sample is None:
             self._last_daily_sample = now
@@ -199,6 +218,11 @@ class BatteryOptimizerCoordinator(DataUpdateCoordinator[OptimizationResult | Non
         self.daily_cost_without_battery += baseline_cost
         self.daily_cost_with_battery += actual_cost
         self.daily_savings = self.daily_cost_without_battery - self.daily_cost_with_battery
+        self.monthly_energy_without_battery_kwh += baseline_kwh
+        self.monthly_energy_with_battery_kwh += actual_kwh
+        self.monthly_cost_without_battery += baseline_cost
+        self.monthly_cost_with_battery += actual_cost
+        self.monthly_savings = self.monthly_cost_without_battery - self.monthly_cost_with_battery
         await self._async_store_daily_totals()
 
     async def _async_store_daily_totals(self) -> None:
@@ -210,6 +234,12 @@ class BatteryOptimizerCoordinator(DataUpdateCoordinator[OptimizationResult | Non
                 "savings": round(self.daily_savings, 4),
                 "energy_without_battery_kwh": round(self.daily_energy_without_battery_kwh, 4),
                 "energy_with_battery_kwh": round(self.daily_energy_with_battery_kwh, 4),
+                "month": self.month_key,
+                "monthly_cost_without_battery": round(self.monthly_cost_without_battery, 4),
+                "monthly_cost_with_battery": round(self.monthly_cost_with_battery, 4),
+                "monthly_savings": round(self.monthly_savings, 4),
+                "monthly_energy_without_battery_kwh": round(self.monthly_energy_without_battery_kwh, 4),
+                "monthly_energy_with_battery_kwh": round(self.monthly_energy_with_battery_kwh, 4),
             }
         )
 
@@ -235,6 +265,10 @@ def _normalize_config(config: dict[str, Any]) -> dict[str, Any]:
 def _parse_date(value: Any) -> date | None:
     if not isinstance(value, str):
         return None
+
+
+def _month_key(value: date) -> str:
+    return f"{value.year:04d}-{value.month:02d}"
     try:
         return date.fromisoformat(value)
     except ValueError:

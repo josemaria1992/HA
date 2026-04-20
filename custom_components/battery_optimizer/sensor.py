@@ -96,6 +96,41 @@ SENSORS: tuple[BatteryOptimizerSensorDescription, ...] = (
         attrs_fn=lambda coordinator: _daily_attrs(coordinator),
     ),
     BatteryOptimizerSensorDescription(
+        key="monthly_cost_without_battery",
+        translation_key="monthly_cost_without_battery",
+        native_unit_of_measurement="SEK",
+        value_fn=lambda coordinator: round(coordinator.monthly_cost_without_battery, 2),
+        attrs_fn=lambda coordinator: _monthly_attrs(coordinator),
+    ),
+    BatteryOptimizerSensorDescription(
+        key="monthly_cost_with_battery",
+        translation_key="monthly_cost_with_battery",
+        native_unit_of_measurement="SEK",
+        value_fn=lambda coordinator: round(coordinator.monthly_cost_with_battery, 2),
+        attrs_fn=lambda coordinator: _monthly_attrs(coordinator),
+    ),
+    BatteryOptimizerSensorDescription(
+        key="monthly_savings",
+        translation_key="monthly_savings",
+        native_unit_of_measurement="SEK",
+        value_fn=lambda coordinator: round(coordinator.monthly_savings, 2),
+        attrs_fn=lambda coordinator: _monthly_attrs(coordinator),
+    ),
+    BatteryOptimizerSensorDescription(
+        key="monthly_energy_without_battery",
+        translation_key="monthly_energy_without_battery",
+        native_unit_of_measurement="kWh",
+        value_fn=lambda coordinator: round(coordinator.monthly_energy_without_battery_kwh, 3),
+        attrs_fn=lambda coordinator: _monthly_attrs(coordinator),
+    ),
+    BatteryOptimizerSensorDescription(
+        key="monthly_energy_with_battery",
+        translation_key="monthly_energy_with_battery",
+        native_unit_of_measurement="kWh",
+        value_fn=lambda coordinator: round(coordinator.monthly_energy_with_battery_kwh, 3),
+        attrs_fn=lambda coordinator: _monthly_attrs(coordinator),
+    ),
+    BatteryOptimizerSensorDescription(
         key="price_today_comparison",
         translation_key="price_today_comparison",
         native_unit_of_measurement="SEK/kWh",
@@ -188,6 +223,7 @@ class BatteryOptimizerSensor(CoordinatorEntity[BatteryOptimizerCoordinator], Sen
         if (
             self.entity_description.key == "last_command"
             or self.entity_description.key.startswith("daily_")
+            or self.entity_description.key.startswith("monthly_")
             or self.entity_description.key.startswith("price_")
         ):
             return True
@@ -287,6 +323,19 @@ def _daily_attrs(coordinator: BatteryOptimizerCoordinator) -> dict[str, Any]:
         "daily_energy_with_battery_kwh": round(coordinator.daily_energy_with_battery_kwh, 4),
         "currency": "SEK",
         "method": "Baseline uses live load power. Actual uses positive grid import from the three phase power sensors. Both are multiplied by the current hourly average price.",
+    }
+
+
+def _monthly_attrs(coordinator: BatteryOptimizerCoordinator) -> dict[str, Any]:
+    return {
+        "month": coordinator.month_key,
+        "monthly_cost_without_battery": round(coordinator.monthly_cost_without_battery, 4),
+        "monthly_cost_with_battery": round(coordinator.monthly_cost_with_battery, 4),
+        "monthly_savings": round(coordinator.monthly_savings, 4),
+        "monthly_energy_without_battery_kwh": round(coordinator.monthly_energy_without_battery_kwh, 4),
+        "monthly_energy_with_battery_kwh": round(coordinator.monthly_energy_with_battery_kwh, 4),
+        "currency": "SEK",
+        "method": "Month-to-date accumulator. Baseline uses live load power. Actual uses positive grid import from the three phase power sensors. Both are multiplied by spot price plus configured taxes and fees.",
     }
 
 

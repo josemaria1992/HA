@@ -98,6 +98,20 @@ cards:
         name: Today's grid energy with battery
 
   - type: entities
+    title: Month-To-Date Invoice Estimate
+    entities:
+      - entity: sensor.battery_optimizer_monthly_cost_without_battery
+        name: Month cost without battery
+      - entity: sensor.battery_optimizer_monthly_cost_with_battery
+        name: Month cost with battery
+      - entity: sensor.battery_optimizer_monthly_savings
+        name: Month savings
+      - entity: sensor.battery_optimizer_monthly_energy_without_battery
+        name: Month energy without battery
+      - entity: sensor.battery_optimizer_monthly_energy_with_battery
+        name: Month grid energy with battery
+
+  - type: entities
     title: Projected Coming Window
     entities:
       - entity: sensor.battery_optimizer_cost_without_battery

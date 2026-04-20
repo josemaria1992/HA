@@ -36,6 +36,14 @@ async def async_get_config_entry_diagnostics(hass: HomeAssistant, entry: ConfigE
             "energy_without_battery_kwh": coordinator.daily_energy_without_battery_kwh,
             "energy_with_battery_kwh": coordinator.daily_energy_with_battery_kwh,
         },
+        "monthly": {
+            "month": coordinator.month_key,
+            "cost_without_battery": coordinator.monthly_cost_without_battery,
+            "cost_with_battery": coordinator.monthly_cost_with_battery,
+            "savings": coordinator.monthly_savings,
+            "energy_without_battery_kwh": coordinator.monthly_energy_without_battery_kwh,
+            "energy_with_battery_kwh": coordinator.monthly_energy_with_battery_kwh,
+        },
         "reasons": data.reasons if data else [],
         "plan_preview": [
             {

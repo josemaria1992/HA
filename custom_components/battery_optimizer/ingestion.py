@@ -20,6 +20,7 @@ from .const import (
     CONF_CHARGE_EFFICIENCY,
     CONF_DEGRADATION_COST,
     CONF_DISCHARGE_EFFICIENCY,
+    CONF_GRID_FEE_PER_KWH,
     CONF_HARD_MAX_SOC,
     CONF_HORIZON_HOURS,
     CONF_INTERVAL_MINUTES,
@@ -36,6 +37,7 @@ from .const import (
     CONF_RESERVE_SOC,
     DEFAULT_HORIZON_HOURS,
     DEFAULT_INTERVAL_MINUTES,
+    DEFAULT_GRID_FEE_PER_KWH,
 )
 from .optimizer import BatteryConstraints, LoadPoint, OptimizationInput, PricePoint
 
@@ -105,6 +107,7 @@ class DataIngestor:
             charge_efficiency=float(self.config[CONF_CHARGE_EFFICIENCY]),
             discharge_efficiency=float(self.config[CONF_DISCHARGE_EFFICIENCY]),
             degradation_cost_per_kwh=float(self.config[CONF_DEGRADATION_COST]),
+            grid_fee_per_kwh=float(self.config.get(CONF_GRID_FEE_PER_KWH, DEFAULT_GRID_FEE_PER_KWH)),
             interval_minutes=int(self.config.get(CONF_INTERVAL_MINUTES, DEFAULT_INTERVAL_MINUTES)),
             min_dwell_intervals=int(self.config[CONF_MIN_DWELL_INTERVALS]),
             price_hysteresis=float(self.config[CONF_PRICE_HYSTERESIS]),

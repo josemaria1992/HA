@@ -49,6 +49,7 @@ class BatteryConstraints:
     charge_efficiency: float
     discharge_efficiency: float
     degradation_cost_per_kwh: float
+    grid_fee_per_kwh: float
     interval_minutes: int
     min_dwell_intervals: int
     price_hysteresis: float
@@ -150,7 +151,8 @@ def optimize(input_data: OptimizationInput) -> OptimizationResult:
     constraints = input_data.constraints
     prices = sorted(input_data.prices, key=lambda item: item.start)
     interval_hours = constraints.interval_minutes / 60
-    price_values = [point.price for point in prices]
+    total_prices = [point.price + constraints.grid_fee_per_kwh for point in prices]
+    price_values = total_prices
     avg_price = mean(price_values)
     low_threshold = _percentile(price_values, 0.30)
     high_threshold = _percentile(price_values, 0.70)
@@ -158,7 +160,7 @@ def optimize(input_data: OptimizationInput) -> OptimizationResult:
     profitable_spread = constraints.degradation_cost_per_kwh + constraints.price_hysteresis
 
     reasons = [
-        f"Average price {avg_price:.3f}; low threshold {low_threshold:.3f}; high threshold {high_threshold:.3f}.",
+        f"Average all-in price {avg_price:.3f}; low threshold {low_threshold:.3f}; high threshold {high_threshold:.3f}.",
         f"Estimated profitable spread {effective_spread:.3f}; required spread {profitable_spread:.3f}.",
     ]
     if effective_spread <= profitable_spread:
@@ -181,11 +183,17 @@ def optimize(input_data: OptimizationInput) -> OptimizationResult:
     projected_cost_with_battery = 0.0
     dwell_remaining = _dwell_remaining(input_data.previous_mode, input_data.previous_mode_intervals, constraints.min_dwell_intervals)
 
-    charge_windows = {point.start for point in prices if point.price <= low_threshold}
-    discharge_windows = {point.start for point in prices if point.price >= high_threshold}
+    all_in_by_start = {point.start: point.price + constraints.grid_fee_per_kwh for point in prices}
+    charge_windows = {point.start for point in prices if all_in_by_start[point.start] <= low_threshold}
+    discharge_windows = {point.start for point in prices if all_in_by_start[point.start] >= high_threshold}
+    future_value = _future_stored_energy_values(total_prices, constraints)
 
     loads = [point.load_kw for point in input_data.load_forecast]
     for index, point in enumerate(prices):
+        all_in_price = point.price + constraints.grid_fee_per_kwh
+        future_stored_value = future_value[index + 1] if index + 1 < len(future_value) else 0.0
+        current_stored_value = all_in_price * constraints.discharge_efficiency - constraints.degradation_cost_per_kwh
+        charge_cost_per_stored_kwh = all_in_price / constraints.charge_efficiency
         forecast_load_kw = loads[index] if index < len(loads) else (loads[-1] if loads else constraints.max_discharge_kw)
         current_kwh = constraints.capacity_kwh * soc / 100
         soc_before = soc
@@ -199,21 +207,42 @@ def optimize(input_data: OptimizationInput) -> OptimizationResult:
         reason = "Holding because this interval is neutral."
         expected_value = 0.0
 
-        if effective_spread > profitable_spread and point.start in charge_windows and can_charge_kwh > 0.01:
+        should_charge = (
+            effective_spread > profitable_spread
+            and point.start in charge_windows
+            and can_charge_kwh > 0.01
+            and future_stored_value > charge_cost_per_stored_kwh + constraints.price_hysteresis
+        )
+        should_discharge = (
+            effective_spread > profitable_spread
+            and point.start in discharge_windows
+            and can_discharge_kwh > 0.01
+            and forecast_load_kw > 0
+            and current_stored_value >= future_stored_value - constraints.price_hysteresis
+            and current_stored_value > constraints.degradation_cost_per_kwh
+        )
+
+        if should_charge:
             requested_mode = BatteryMode.CHARGE
             charge_grid_kwh = min(constraints.max_charge_kw * interval_hours, can_charge_kwh / constraints.charge_efficiency)
             target_kw = charge_grid_kwh / interval_hours
             stored_kwh = charge_grid_kwh * constraints.charge_efficiency
             soc += (stored_kwh / constraints.capacity_kwh) * 100
-            reason = f"Charging in low-price interval at {point.price:.3f}."
-        elif effective_spread > profitable_spread and point.start in discharge_windows and can_discharge_kwh > 0.01:
+            reason = (
+                f"Charging because all-in price {all_in_price:.3f} is below future stored-energy value "
+                f"{future_stored_value:.3f}."
+            )
+        elif should_discharge:
             requested_mode = BatteryMode.DISCHARGE
             useful_discharge_kw = min(constraints.max_discharge_kw, max(forecast_load_kw, 0))
             discharge_battery_kwh = min(useful_discharge_kw * interval_hours / constraints.discharge_efficiency, can_discharge_kwh)
             delivered_kwh = discharge_battery_kwh * constraints.discharge_efficiency
             target_kw = delivered_kwh / interval_hours
             soc -= (discharge_battery_kwh / constraints.capacity_kwh) * 100
-            reason = f"Discharging in high-price interval at {point.price:.3f}."
+            reason = (
+                f"Discharging because all-in price {all_in_price:.3f} is among the best remaining value "
+                "for stored energy."
+            )
         elif soc < constraints.reserve_soc_percent:
             requested_mode = BatteryMode.CHARGE
             charge_grid_kwh = min(constraints.max_charge_kw * interval_hours, (reserve_kwh - current_kwh) / constraints.charge_efficiency)
@@ -238,8 +267,8 @@ def optimize(input_data: OptimizationInput) -> OptimizationResult:
             grid_with_battery_kwh += charge_grid_kwh
         elif mode is BatteryMode.DISCHARGE:
             grid_with_battery_kwh = max(load_kwh - delivered_kwh, 0)
-        cost_without_battery = grid_without_battery_kwh * point.price
-        cost_with_battery = grid_with_battery_kwh * point.price
+        cost_without_battery = grid_without_battery_kwh * all_in_price
+        cost_with_battery = grid_with_battery_kwh * all_in_price
         expected_value = cost_without_battery - cost_with_battery - (discharge_battery_kwh * constraints.degradation_cost_per_kwh)
         expected_savings += expected_value
         projected_cost_without_battery += cost_without_battery
@@ -250,7 +279,7 @@ def optimize(input_data: OptimizationInput) -> OptimizationResult:
                 mode=mode,
                 target_power_kw=round(target_kw, 3),
                 projected_soc_percent=round(soc, 1),
-                price=point.price,
+                price=round(all_in_price, 5),
                 load_kw=round(forecast_load_kw, 3),
                 grid_import_without_battery_kwh=round(grid_without_battery_kwh, 3),
                 grid_import_with_battery_kwh=round(grid_with_battery_kwh, 3),
@@ -284,6 +313,18 @@ def _percentile(values: list[float], percentile: float) -> float:
         return 0.0
     idx = min(max(round((len(ordered) - 1) * percentile), 0), len(ordered) - 1)
     return ordered[idx]
+
+
+def _future_stored_energy_values(prices: list[float], constraints: BatteryConstraints) -> list[float]:
+    """Return the best future value of one stored battery kWh from each interval."""
+
+    values = [0.0] * (len(prices) + 1)
+    best = 0.0
+    for index in range(len(prices) - 1, -1, -1):
+        discharge_value = prices[index] * constraints.discharge_efficiency - constraints.degradation_cost_per_kwh
+        best = max(best, discharge_value)
+        values[index] = best
+    return values
 
 
 def _dwell_remaining(previous_mode: BatteryMode | None, previous_intervals: int, minimum: int) -> int:

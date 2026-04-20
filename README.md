@@ -44,6 +44,7 @@ You will be asked for:
 - Max charge and discharge power in kW
 - Charge and discharge efficiency
 - Battery voltage entity or fallback nominal voltage, used to convert Solarman amps into kW and planned kW back into amps
+- Tax and grid fees per kWh. Default: `0.773 SEK/kWh`
 - Safety limits:
   - Reserve SOC: default `10%`
   - Preferred max SOC: default `90%`
@@ -103,6 +104,11 @@ Created entities include:
 - `sensor.battery_optimizer_daily_savings`
 - `sensor.battery_optimizer_daily_energy_without_battery`
 - `sensor.battery_optimizer_daily_energy_with_battery`
+- `sensor.battery_optimizer_monthly_cost_without_battery`
+- `sensor.battery_optimizer_monthly_cost_with_battery`
+- `sensor.battery_optimizer_monthly_savings`
+- `sensor.battery_optimizer_monthly_energy_without_battery`
+- `sensor.battery_optimizer_monthly_energy_with_battery`
 - `sensor.battery_optimizer_price_today_comparison`
 - `sensor.battery_optimizer_price_tomorrow_comparison`
 - `sensor.battery_optimizer_upcoming_charge_hours`
@@ -243,6 +249,20 @@ cards:
         name: Today's grid energy with battery
 
   - type: entities
+    title: Month-To-Date Invoice Estimate
+    entities:
+      - entity: sensor.battery_optimizer_monthly_cost_without_battery
+        name: Month cost without battery
+      - entity: sensor.battery_optimizer_monthly_cost_with_battery
+        name: Month cost with battery
+      - entity: sensor.battery_optimizer_monthly_savings
+        name: Month savings
+      - entity: sensor.battery_optimizer_monthly_energy_without_battery
+        name: Month energy without battery
+      - entity: sensor.battery_optimizer_monthly_energy_with_battery
+        name: Month grid energy with battery
+
+  - type: entities
     title: Projected Coming Window
     entities:
       - entity: sensor.battery_optimizer_cost_without_battery
@@ -276,13 +296,18 @@ cards:
 The first optimizer is a rolling-horizon heuristic rather than a solver dependency. It:
 
 1. Reads the available price horizon, normally today plus tomorrow.
-2. Computes low and high price thresholds from the 30th and 70th percentiles.
-3. Estimates whether the spread is profitable after round-trip efficiency and degradation cost.
-4. Charges in cheap intervals if there is room below the chosen max SOC.
-5. Discharges in expensive intervals if SOC remains above reserve.
-6. Holds when the spread is not worth cycling the battery.
-7. Applies hysteresis and minimum dwell intervals to reduce charge/discharge oscillation.
-8. Explains the current decision in plain attributes.
+2. Adds the configured per-kWh tax/grid fee to spot prices for an all-in import price.
+3. Computes low and high price thresholds from the 30th and 70th percentiles.
+4. Estimates whether the spread is profitable after round-trip efficiency, degradation cost, and hysteresis.
+5. Looks forward through the remaining horizon to estimate the best future value of one stored battery kWh.
+6. Charges in low-price intervals only when a later discharge opportunity is valuable enough.
+7. Discharges in high-price intervals when current stored-energy value is among the best remaining uses.
+8. Caps discharge by the load forecast so the plan avoids discharging beyond expected household consumption.
+9. Holds when the spread is not worth cycling the battery.
+10. Applies hysteresis and minimum dwell intervals to reduce charge/discharge oscillation.
+11. Explains the current decision in plain attributes.
+
+If no load forecast entity is configured, Battery Optimizer uses the current load as a flat forecast. A real load forecast will improve decisions around repeated daily valleys and peaks.
 
 This is deliberately conservative. A future linear programming backend can be added behind the same `optimize()` input/output model.
 
