@@ -45,6 +45,20 @@ SENSORS: tuple[BatteryOptimizerSensorDescription, ...] = (
         value_fn=lambda coordinator: coordinator.data.expected_savings if coordinator.data else None,
     ),
     BatteryOptimizerSensorDescription(
+        key="cost_without_battery",
+        translation_key="cost_without_battery",
+        native_unit_of_measurement="SEK",
+        value_fn=lambda coordinator: coordinator.data.projected_cost_without_battery if coordinator.data else None,
+        attrs_fn=lambda coordinator: _cost_attrs(coordinator),
+    ),
+    BatteryOptimizerSensorDescription(
+        key="cost_with_battery",
+        translation_key="cost_with_battery",
+        native_unit_of_measurement="SEK",
+        value_fn=lambda coordinator: coordinator.data.projected_cost_with_battery if coordinator.data else None,
+        attrs_fn=lambda coordinator: _cost_attrs(coordinator),
+    ),
+    BatteryOptimizerSensorDescription(
         key="cheapest_charge_windows",
         translation_key="cheapest_charge_windows",
         value_fn=lambda coordinator: len(coordinator.data.cheapest_charge_windows) if coordinator.data else None,
@@ -137,6 +151,11 @@ def _plan_attrs(coordinator: BatteryOptimizerCoordinator) -> dict[str, Any]:
                 "target_power_kw": interval.target_power_kw,
                 "projected_soc_percent": interval.projected_soc_percent,
                 "price": interval.price,
+                "load_kw": interval.load_kw,
+                "grid_import_without_battery_kwh": interval.grid_import_without_battery_kwh,
+                "grid_import_with_battery_kwh": interval.grid_import_with_battery_kwh,
+                "cost_without_battery": interval.cost_without_battery,
+                "cost_with_battery": interval.cost_with_battery,
                 "reason": interval.reason,
             }
             for interval in coordinator.data.intervals[:48]
@@ -167,8 +186,37 @@ def _mode_schedule_attrs(coordinator: BatteryOptimizerCoordinator, mode: Battery
                 "target_power_kw": interval.target_power_kw,
                 "projected_soc_percent": interval.projected_soc_percent,
                 "price": interval.price,
+                "load_kw": interval.load_kw,
+                "grid_import_without_battery_kwh": interval.grid_import_without_battery_kwh,
+                "grid_import_with_battery_kwh": interval.grid_import_with_battery_kwh,
+                "cost_without_battery": interval.cost_without_battery,
+                "cost_with_battery": interval.cost_with_battery,
                 "reason": interval.reason,
             }
             for interval in intervals[:48]
+        ],
+    }
+
+
+def _cost_attrs(coordinator: BatteryOptimizerCoordinator) -> dict[str, Any]:
+    if not coordinator.data:
+        return {}
+    return {
+        "projected_cost_without_battery": coordinator.data.projected_cost_without_battery,
+        "projected_cost_with_battery": coordinator.data.projected_cost_with_battery,
+        "projected_savings": coordinator.data.expected_savings,
+        "currency": "SEK",
+        "hours": [
+            {
+                "time": interval.start.strftime("%Y-%m-%d %H:%M"),
+                "price": interval.price,
+                "load_kw": interval.load_kw,
+                "mode": interval.mode.value,
+                "grid_import_without_battery_kwh": interval.grid_import_without_battery_kwh,
+                "grid_import_with_battery_kwh": interval.grid_import_with_battery_kwh,
+                "cost_without_battery": interval.cost_without_battery,
+                "cost_with_battery": interval.cost_with_battery,
+            }
+            for interval in coordinator.data.intervals[:48]
         ],
     }

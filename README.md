@@ -94,6 +94,8 @@ Created entities include:
 - `sensor.battery_optimizer_planned_mode`
 - `sensor.battery_optimizer_projected_soc`
 - `sensor.battery_optimizer_expected_value`
+- `sensor.battery_optimizer_cost_without_battery`
+- `sensor.battery_optimizer_cost_with_battery`
 - `sensor.battery_optimizer_upcoming_charge_hours`
 - `sensor.battery_optimizer_upcoming_discharge_hours`
 - `sensor.battery_optimizer_cheapest_charge_windows`
@@ -132,6 +134,43 @@ service: battery_optimizer.apply_now
 ```yaml
 type: vertical-stack
 cards:
+  - type: entities
+    title: Price, SOC, and Plan
+    entities:
+      - entity: sensor.nordpool_kwh_se4_sek_3_10_025
+        name: Current Nord Pool price
+      - entity: sensor.inverter_battery
+        name: Current SOC
+      - entity: sensor.battery_optimizer_projected_soc
+        name: Projected SOC next hour
+      - entity: sensor.battery_optimizer_planned_mode
+        name: Planned mode
+      - entity: sensor.battery_optimizer_upcoming_charge_hours
+        name: Upcoming charge hours
+      - entity: sensor.battery_optimizer_upcoming_discharge_hours
+        name: Upcoming discharge hours
+
+  - type: history-graph
+    title: Price vs Current and Projected SOC
+    hours_to_show: 48
+    entities:
+      - entity: sensor.nordpool_kwh_se4_sek_3_10_025
+        name: Hourly avg price
+      - entity: sensor.inverter_battery
+        name: Current SOC
+      - entity: sensor.battery_optimizer_projected_soc
+        name: Projected SOC
+
+  - type: entities
+    title: Projected Invoice Comparison
+    entities:
+      - entity: sensor.battery_optimizer_cost_without_battery
+        name: Cost without battery
+      - entity: sensor.battery_optimizer_cost_with_battery
+        name: Cost with battery
+      - entity: sensor.battery_optimizer_expected_value
+        name: Projected savings
+
   - type: entities
     title: Battery Optimizer
     entities:

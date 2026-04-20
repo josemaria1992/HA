@@ -61,6 +61,8 @@
       "planned_mode": { "name": "Planned mode" },
       "projected_soc": { "name": "Projected SOC" },
       "expected_savings": { "name": "Expected value" },
+      "cost_without_battery": { "name": "Projected cost without battery" },
+      "cost_with_battery": { "name": "Projected cost with battery" },
       "cheapest_charge_windows": { "name": "Cheapest charge windows" },
       "best_discharge_windows": { "name": "Best discharge windows" },
       "upcoming_charge_hours": { "name": "Upcoming charge hours" },

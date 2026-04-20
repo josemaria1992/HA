@@ -133,11 +133,18 @@ class DataIngestor:
         if not raw:
             reasons.append("Price entity does not expose today/tomorrow price arrays.")
             return []
-        start = now.replace(minute=0, second=0, microsecond=0)
+        source_interval_minutes = _infer_source_interval_minutes(raw)
+        prices = _aggregate_prices(raw, source_interval_minutes, interval_minutes)
+        if source_interval_minutes != interval_minutes:
+            reasons.append(
+                f"Averaged {source_interval_minutes}-minute Nord Pool prices into {interval_minutes}-minute supplier billing prices."
+            )
+        start = now.replace(hour=0, minute=0, second=0, microsecond=0)
+        current_window_start = now.replace(minute=0, second=0, microsecond=0)
         points: list[PricePoint] = []
-        for index, price in enumerate(raw):
+        for index, price in enumerate(prices):
             point_start = start + timedelta(minutes=index * interval_minutes)
-            if point_start >= now - timedelta(minutes=interval_minutes):
+            if point_start >= current_window_start:
                 points.append(PricePoint(point_start, float(price)))
             if len(points) >= horizon_hours * 60 / interval_minutes:
                 break
@@ -248,3 +255,27 @@ def _extract_numeric_list(state: State) -> list[float]:
         if isinstance(raw, list):
             return _coerce_price_values(raw)
     return []
+
+
+def _infer_source_interval_minutes(values: list[float]) -> int:
+    """Infer Nord Pool source granularity from today/tomorrow value count."""
+
+    if len(values) >= 72:
+        return 15
+    if len(values) >= 36:
+        return 30
+    return 60
+
+
+def _aggregate_prices(values: list[float], source_interval_minutes: int, target_interval_minutes: int) -> list[float]:
+    """Average source prices into the supplier billing interval."""
+
+    if target_interval_minutes <= source_interval_minutes:
+        return values
+    chunk_size = max(round(target_interval_minutes / source_interval_minutes), 1)
+    aggregated: list[float] = []
+    for index in range(0, len(values), chunk_size):
+        chunk = values[index : index + chunk_size]
+        if len(chunk) == chunk_size:
+            aggregated.append(sum(chunk) / len(chunk))
+    return aggregated

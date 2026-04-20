@@ -76,6 +76,11 @@ class PlanInterval:
     target_power_kw: float
     projected_soc_percent: float
     price: float
+    load_kw: float
+    grid_import_without_battery_kwh: float
+    grid_import_with_battery_kwh: float
+    cost_without_battery: float
+    cost_with_battery: float
     expected_value: float
     reason: str
 
@@ -87,6 +92,8 @@ class OptimizationResult:
     generated_at: datetime
     intervals: list[PlanInterval]
     expected_savings: float
+    projected_cost_without_battery: float
+    projected_cost_with_battery: float
     current_mode: BatteryMode
     projected_soc_percent: float
     reasons: list[str] = field(default_factory=list)
@@ -131,6 +138,8 @@ def optimize(input_data: OptimizationInput) -> OptimizationResult:
             generated_at=input_data.generated_at,
             intervals=[],
             expected_savings=0,
+            projected_cost_without_battery=0,
+            projected_cost_with_battery=0,
             current_mode=BatteryMode.HOLD,
             projected_soc_percent=input_data.constraints.soc_percent,
             reasons=errors,
@@ -168,6 +177,8 @@ def optimize(input_data: OptimizationInput) -> OptimizationResult:
 
     plan: list[PlanInterval] = []
     expected_savings = 0.0
+    projected_cost_without_battery = 0.0
+    projected_cost_with_battery = 0.0
     dwell_remaining = _dwell_remaining(input_data.previous_mode, input_data.previous_mode_intervals, constraints.min_dwell_intervals)
 
     charge_windows = {point.start for point in prices if point.price <= low_threshold}
@@ -177,10 +188,14 @@ def optimize(input_data: OptimizationInput) -> OptimizationResult:
     for index, point in enumerate(prices):
         forecast_load_kw = loads[index] if index < len(loads) else (loads[-1] if loads else constraints.max_discharge_kw)
         current_kwh = constraints.capacity_kwh * soc / 100
+        soc_before = soc
         can_charge_kwh = max(max_kwh - current_kwh, 0)
         can_discharge_kwh = max(current_kwh - reserve_kwh, 0)
         requested_mode = BatteryMode.HOLD
         target_kw = 0.0
+        charge_grid_kwh = 0.0
+        discharge_battery_kwh = 0.0
+        delivered_kwh = 0.0
         reason = "Holding because this interval is neutral."
         expected_value = 0.0
 
@@ -190,33 +205,45 @@ def optimize(input_data: OptimizationInput) -> OptimizationResult:
             target_kw = charge_grid_kwh / interval_hours
             stored_kwh = charge_grid_kwh * constraints.charge_efficiency
             soc += (stored_kwh / constraints.capacity_kwh) * 100
-            expected_value = -charge_grid_kwh * point.price
             reason = f"Charging in low-price interval at {point.price:.3f}."
         elif effective_spread > profitable_spread and point.start in discharge_windows and can_discharge_kwh > 0.01:
             requested_mode = BatteryMode.DISCHARGE
             useful_discharge_kw = min(constraints.max_discharge_kw, max(forecast_load_kw, 0))
-            battery_kwh = min(useful_discharge_kw * interval_hours / constraints.discharge_efficiency, can_discharge_kwh)
-            delivered_kwh = battery_kwh * constraints.discharge_efficiency
+            discharge_battery_kwh = min(useful_discharge_kw * interval_hours / constraints.discharge_efficiency, can_discharge_kwh)
+            delivered_kwh = discharge_battery_kwh * constraints.discharge_efficiency
             target_kw = delivered_kwh / interval_hours
-            soc -= (battery_kwh / constraints.capacity_kwh) * 100
-            expected_value = delivered_kwh * point.price - battery_kwh * constraints.degradation_cost_per_kwh
+            soc -= (discharge_battery_kwh / constraints.capacity_kwh) * 100
             reason = f"Discharging in high-price interval at {point.price:.3f}."
         elif soc < constraints.reserve_soc_percent:
             requested_mode = BatteryMode.CHARGE
             charge_grid_kwh = min(constraints.max_charge_kw * interval_hours, (reserve_kwh - current_kwh) / constraints.charge_efficiency)
             target_kw = max(charge_grid_kwh / interval_hours, 0)
             soc += (charge_grid_kwh * constraints.charge_efficiency / constraints.capacity_kwh) * 100
-            expected_value = -charge_grid_kwh * point.price
             reason = "Charging to recover reserve SOC."
 
         mode = _apply_dwell(input_data.previous_mode, requested_mode, dwell_remaining)
         if mode is BatteryMode.HOLD and requested_mode is not BatteryMode.HOLD:
             reason = f"Holding to satisfy minimum dwell time before switching to {requested_mode.value}."
+            soc = soc_before
             target_kw = 0.0
-            expected_value = 0.0
+            charge_grid_kwh = 0.0
+            discharge_battery_kwh = 0.0
+            delivered_kwh = 0.0
 
         soc = min(max(soc, constraints.reserve_soc_percent), constraints.hard_max_soc_percent)
+        load_kwh = max(forecast_load_kw, 0) * interval_hours
+        grid_without_battery_kwh = load_kwh
+        grid_with_battery_kwh = load_kwh
+        if mode is BatteryMode.CHARGE:
+            grid_with_battery_kwh += charge_grid_kwh
+        elif mode is BatteryMode.DISCHARGE:
+            grid_with_battery_kwh = max(load_kwh - delivered_kwh, 0)
+        cost_without_battery = grid_without_battery_kwh * point.price
+        cost_with_battery = grid_with_battery_kwh * point.price
+        expected_value = cost_without_battery - cost_with_battery - (discharge_battery_kwh * constraints.degradation_cost_per_kwh)
         expected_savings += expected_value
+        projected_cost_without_battery += cost_without_battery
+        projected_cost_with_battery += cost_with_battery
         plan.append(
             PlanInterval(
                 start=point.start,
@@ -224,6 +251,11 @@ def optimize(input_data: OptimizationInput) -> OptimizationResult:
                 target_power_kw=round(target_kw, 3),
                 projected_soc_percent=round(soc, 1),
                 price=point.price,
+                load_kw=round(forecast_load_kw, 3),
+                grid_import_without_battery_kwh=round(grid_without_battery_kwh, 3),
+                grid_import_with_battery_kwh=round(grid_with_battery_kwh, 3),
+                cost_without_battery=round(cost_without_battery, 3),
+                cost_with_battery=round(cost_with_battery, 3),
                 expected_value=round(expected_value, 3),
                 reason=reason,
             )
@@ -235,6 +267,8 @@ def optimize(input_data: OptimizationInput) -> OptimizationResult:
         generated_at=input_data.generated_at,
         intervals=plan,
         expected_savings=round(expected_savings, 3),
+        projected_cost_without_battery=round(projected_cost_without_battery, 3),
+        projected_cost_with_battery=round(projected_cost_with_battery, 3),
         current_mode=current.mode if current else BatteryMode.HOLD,
         projected_soc_percent=current.projected_soc_percent if current else constraints.soc_percent,
         reasons=reasons + ([current.reason] if current else []),

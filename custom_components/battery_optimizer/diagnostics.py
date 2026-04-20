@@ -25,6 +25,9 @@ async def async_get_config_entry_diagnostics(hass: HomeAssistant, entry: ConfigE
         "last_applied_message": coordinator.last_applied_message,
         "valid_plan": data.valid if data else False,
         "current_mode": data.current_mode.value if data else None,
+        "projected_cost_without_battery": data.projected_cost_without_battery if data else None,
+        "projected_cost_with_battery": data.projected_cost_with_battery if data else None,
+        "expected_savings": data.expected_savings if data else None,
         "reasons": data.reasons if data else [],
         "plan_preview": [
             {
@@ -42,4 +45,3 @@ async def async_get_config_entry_diagnostics(hass: HomeAssistant, entry: ConfigE
 
 def _redact(value: dict[str, Any]) -> dict[str, Any]:
     return {key: ("REDACTED" if key in TO_REDACT else item) for key, item in value.items()}
-
