@@ -124,6 +124,7 @@ Created entities include:
 - `sensor.battery_optimizer_best_discharge_windows`
 - `sensor.battery_optimizer_decision_reasons`
 - `sensor.battery_optimizer_last_command`
+- `select.battery_optimizer_aggressiveness`
 - `select.battery_optimizer_override_mode`
 - `switch.battery_optimizer_advisory_only_mode`
 - `button.battery_optimizer_apply_current_plan`
@@ -298,9 +299,23 @@ cards:
       - entity: sensor.battery_optimizer_upcoming_charge_hours
       - entity: sensor.battery_optimizer_upcoming_discharge_hours
       - entity: sensor.battery_optimizer_decision_reasons
+      - entity: select.battery_optimizer_aggressiveness
       - entity: select.battery_optimizer_override_mode
       - entity: switch.battery_optimizer_advisory_only_mode
       - entity: button.battery_optimizer_apply_current_plan
+
+  - type: entities
+    title: Optimizer Controls
+    entities:
+      - entity: select.battery_optimizer_aggressiveness
+        name: Aggressiveness
+      - entity: select.battery_optimizer_override_mode
+        name: Manual override
+      - entity: switch.battery_optimizer_advisory_only_mode
+        name: Advisory-only mode
+      - entity: button.battery_optimizer_apply_current_plan
+        name: Apply current plan
+
   - type: entities
     title: Windows
     entities:

@@ -108,11 +108,11 @@ class BatteryOptimizerOptionsFlow(config_entries.OptionsFlow):
     """Handle options updates."""
 
     def __init__(self, config_entry: config_entries.ConfigEntry) -> None:
-        self.config_entry = config_entry
+        self._config_entry = config_entry
 
     async def async_step_init(self, user_input: dict[str, Any] | None = None):
         errors: dict[str, str] = {}
-        current = {**self.config_entry.data, **self.config_entry.options}
+        current = {**self._config_entry.data, **self._config_entry.options}
         if user_input is not None:
             merged = {**current, **user_input}
             errors = _validate(merged)

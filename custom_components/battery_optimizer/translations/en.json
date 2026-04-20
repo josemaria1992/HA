@@ -90,7 +90,8 @@
       "last_command": { "name": "Last command" }
     },
     "select": {
-      "override_mode": { "name": "Override mode" }
+      "override_mode": { "name": "Override mode" },
+      "aggressiveness": { "name": "Aggressiveness" }
     },
     "switch": {
       "advisory_only": { "name": "Advisory-only mode" }
