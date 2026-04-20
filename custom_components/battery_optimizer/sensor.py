@@ -145,6 +145,13 @@ SENSORS: tuple[BatteryOptimizerSensorDescription, ...] = (
         attrs_fn=lambda coordinator: _price_comparison_attrs(coordinator, "tomorrow"),
     ),
     BatteryOptimizerSensorDescription(
+        key="load_forecast",
+        translation_key="load_forecast",
+        native_unit_of_measurement="kW",
+        value_fn=lambda coordinator: coordinator.load_forecast[0].load_kw if coordinator.load_forecast else None,
+        attrs_fn=lambda coordinator: _load_forecast_attrs(coordinator),
+    ),
+    BatteryOptimizerSensorDescription(
         key="cheapest_charge_windows",
         translation_key="cheapest_charge_windows",
         value_fn=lambda coordinator: len(coordinator.data.cheapest_charge_windows) if coordinator.data else None,
@@ -225,6 +232,7 @@ class BatteryOptimizerSensor(CoordinatorEntity[BatteryOptimizerCoordinator], Sen
             or self.entity_description.key.startswith("daily_")
             or self.entity_description.key.startswith("monthly_")
             or self.entity_description.key.startswith("price_")
+            or self.entity_description.key == "load_forecast"
         ):
             return True
         return bool(self.coordinator.data and self.coordinator.data.valid)
@@ -369,3 +377,18 @@ def _price_comparison_day(coordinator: BatteryOptimizerCoordinator, day_key: str
     if not price_entity:
         return {}
     return build_price_comparison(coordinator.hass, price_entity).get(day_key, {})
+
+
+def _load_forecast_attrs(coordinator: BatteryOptimizerCoordinator) -> dict[str, Any]:
+    return {
+        "forecast": [
+            {
+                "time": point.start.isoformat(),
+                "load_kw": point.load_kw,
+                "source": point.source,
+                "samples": point.samples,
+            }
+            for point in coordinator.load_forecast[:48]
+        ],
+        "method": "Recorder history grouped by day-of-week and interval, with weekday-hour and current-load fallback.",
+    }

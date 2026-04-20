@@ -111,6 +111,7 @@ Created entities include:
 - `sensor.battery_optimizer_monthly_energy_with_battery`
 - `sensor.battery_optimizer_price_today_comparison`
 - `sensor.battery_optimizer_price_tomorrow_comparison`
+- `sensor.battery_optimizer_load_forecast`
 - `sensor.battery_optimizer_upcoming_charge_hours`
 - `sensor.battery_optimizer_upcoming_discharge_hours`
 - `sensor.battery_optimizer_cheapest_charge_windows`
@@ -263,6 +264,14 @@ cards:
         name: Month grid energy with battery
 
   - type: entities
+    title: Load Forecast
+    entities:
+      - entity: sensor.battery_optimizer_load_forecast
+        name: Next forecast load
+      - entity: sensor.inverter_load_power
+        name: Current load
+
+  - type: entities
     title: Projected Coming Window
     entities:
       - entity: sensor.battery_optimizer_cost_without_battery
@@ -293,21 +302,22 @@ cards:
 
 ## Optimization Strategy
 
-The first optimizer is a rolling-horizon heuristic rather than a solver dependency. It:
+The optimizer uses dependency-free dynamic programming rather than a heavy MILP solver dependency. It:
 
 1. Reads the available price horizon, normally today plus tomorrow.
 2. Adds the configured per-kWh tax/grid fee to spot prices for an all-in import price.
 3. Computes low and high price thresholds from the 30th and 70th percentiles.
 4. Estimates whether the spread is profitable after round-trip efficiency, degradation cost, and hysteresis.
-5. Looks forward through the remaining horizon to estimate the best future value of one stored battery kWh.
-6. Charges in low-price intervals only when a later discharge opportunity is valuable enough.
-7. Discharges in high-price intervals when current stored-energy value is among the best remaining uses.
-8. Caps discharge by the load forecast so the plan avoids discharging beyond expected household consumption.
-9. Holds when the spread is not worth cycling the battery.
-10. Applies hysteresis and minimum dwell intervals to reduce charge/discharge oscillation.
-11. Explains the current decision in plain attributes.
+5. Discretizes battery SOC into small states and searches for the lowest-cost path through the horizon.
+6. Looks forward through the remaining horizon to estimate the best future value of one stored battery kWh.
+7. Charges in low-price intervals only when a later discharge opportunity is valuable enough.
+8. Discharges in high-price intervals when current stored-energy value is among the best remaining uses.
+9. Caps discharge by the load forecast so the plan avoids discharging beyond expected household consumption.
+10. Holds when the spread is not worth cycling the battery.
+11. Applies hysteresis and minimum dwell intervals to reduce charge/discharge oscillation.
+12. Explains the current decision in plain attributes.
 
-If no load forecast entity is configured, Battery Optimizer uses the current load as a flat forecast. A real load forecast will improve decisions around repeated daily valleys and peaks.
+Load forecasting uses recorder history by default. It groups `sensor.inverter_load_power` by day-of-week and interval, trims outliers, and falls back to weekday-hour history or current load when there are not enough samples. A dedicated `load_forecast_entity` can still be configured for external forecasts.
 
 This is deliberately conservative. A future linear programming backend can be added behind the same `optimize()` input/output model.
 

@@ -25,6 +25,7 @@ from .const import (
     OVERRIDE_HOLD,
 )
 from .ingestion import DataIngestor
+from .load_forecast import ForecastPoint, async_build_history_load_forecast, to_load_points
 from .optimizer import BatteryMode, OptimizationResult, PlanInterval, optimize
 
 _LOGGER = logging.getLogger(__name__)
@@ -51,6 +52,7 @@ class BatteryOptimizerCoordinator(DataUpdateCoordinator[OptimizationResult | Non
         self.monthly_energy_without_battery_kwh = 0.0
         self.monthly_energy_with_battery_kwh = 0.0
         self.month_key = _month_key(dt_util.now().date())
+        self.load_forecast: list[ForecastPoint] = []
         self._last_daily_sample: datetime | None = None
         self._store = Store[dict[str, Any]](hass, STORE_VERSION, f"{DOMAIN}_{entry.entry_id}_daily")
         self._previous_mode: BatteryMode | None = None
@@ -87,7 +89,26 @@ class BatteryOptimizerCoordinator(DataUpdateCoordinator[OptimizationResult | Non
             self.monthly_energy_with_battery_kwh = float(stored.get("monthly_energy_with_battery_kwh", 0))
 
     async def _async_update_data(self) -> OptimizationResult | None:
-        input_data, status = self.ingestor.build_input(self._previous_mode, self._previous_mode_intervals)
+        seed_input, seed_status = self.ingestor.build_input(self._previous_mode, self._previous_mode_intervals)
+        load_override = None
+        if seed_input is not None:
+            starts = [point.start for point in seed_input.prices]
+            self.load_forecast = await async_build_history_load_forecast(
+                self.hass,
+                self.config,
+                starts,
+                seed_input.constraints.interval_minutes,
+            )
+            if self.load_forecast:
+                load_override = to_load_points(self.load_forecast)
+
+        input_data, status = self.ingestor.build_input(
+            self._previous_mode,
+            self._previous_mode_intervals,
+            load_override,
+        )
+        if seed_input is None:
+            status = seed_status
         if input_data is None:
             await self.backend.hold("; ".join(status.reasons))
             _LOGGER.warning("Battery optimizer falling back to hold: %s", "; ".join(status.reasons))
@@ -256,7 +277,7 @@ def _normalize_config(config: dict[str, Any]) -> dict[str, Any]:
         value = normalized.get(key)
         if isinstance(value, str):
             normalized[key] = [item.strip() for item in value.split(",") if item.strip()]
-    for key in ("interval_minutes", "horizon_hours", "min_dwell_intervals"):
+    for key in ("interval_minutes", "horizon_hours", "min_dwell_intervals", "load_history_days", "load_forecast_min_samples"):
         if key in normalized:
             normalized[key] = int(normalized[key])
     return normalized
@@ -265,14 +286,14 @@ def _normalize_config(config: dict[str, Any]) -> dict[str, Any]:
 def _parse_date(value: Any) -> date | None:
     if not isinstance(value, str):
         return None
-
-
-def _month_key(value: date) -> str:
-    return f"{value.year:04d}-{value.month:02d}"
     try:
         return date.fromisoformat(value)
     except ValueError:
         return None
+
+
+def _month_key(value: date) -> str:
+    return f"{value.year:04d}-{value.month:02d}"
 
 
 def _read_kw(hass: HomeAssistant, entity_id: str | None) -> float | None:

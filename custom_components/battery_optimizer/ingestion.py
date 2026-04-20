@@ -59,12 +59,17 @@ class DataIngestor:
         self.hass = hass
         self.config = config
 
-    def build_input(self, previous_mode=None, previous_mode_intervals: int = 0) -> tuple[OptimizationInput | None, IngestionStatus]:
+    def build_input(
+        self,
+        previous_mode=None,
+        previous_mode_intervals: int = 0,
+        load_forecast_override: list[LoadPoint] | None = None,
+    ) -> tuple[OptimizationInput | None, IngestionStatus]:
         now = dt_util.now()
         reasons: list[str] = []
         prices = self._read_prices(now, reasons)
         soc = self._read_float_state(self.config[CONF_BATTERY_SOC_ENTITY], reasons, "battery SOC")
-        load = self._read_load_forecast(now, len(prices), reasons)
+        load = load_forecast_override or self._read_load_forecast(now, len(prices), reasons)
 
         if soc is None or not prices:
             return None, IngestionStatus(False, reasons or ["Required optimizer data is missing."])

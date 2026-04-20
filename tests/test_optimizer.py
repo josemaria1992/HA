@@ -45,12 +45,12 @@ def _input(prices: list[float], soc: float = 50) -> OptimizationInput:
     )
 
 
-def test_optimizer_charges_when_prices_are_cheap() -> None:
-    result = optimize(_input([0.05, 0.06, 0.40, 0.50], soc=40))
+def test_optimizer_charges_when_prices_are_cheap_and_soc_is_low() -> None:
+    result = optimize(_input([0.00, 0.00, 1.00, 1.20], soc=20))
 
     assert result.valid
-    assert result.intervals[0].mode is BatteryMode.CHARGE
-    assert result.intervals[0].projected_soc_percent > 40
+    assert any(interval.mode is BatteryMode.CHARGE for interval in result.intervals[:2])
+    assert max(interval.projected_soc_percent for interval in result.intervals[:2]) > 20
     assert result.cheapest_charge_windows
     assert result.projected_cost_without_battery > 0
     assert result.projected_cost_with_battery > 0

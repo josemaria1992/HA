@@ -112,6 +112,14 @@ cards:
         name: Month grid energy with battery
 
   - type: entities
+    title: Load Forecast
+    entities:
+      - entity: sensor.battery_optimizer_load_forecast
+        name: Next forecast load
+      - entity: sensor.inverter_load_power
+        name: Current load
+
+  - type: entities
     title: Projected Coming Window
     entities:
       - entity: sensor.battery_optimizer_cost_without_battery
