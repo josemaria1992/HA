@@ -41,6 +41,13 @@ SENSORS: tuple[BatteryOptimizerSensorDescription, ...] = (
         value_fn=lambda coordinator: coordinator.data.projected_soc_percent if coordinator.data else None,
     ),
     BatteryOptimizerSensorDescription(
+        key="projected_soc_schedule",
+        translation_key="projected_soc_schedule",
+        native_unit_of_measurement="%",
+        value_fn=lambda coordinator: coordinator.data.projected_soc_percent if coordinator.data else None,
+        attrs_fn=lambda coordinator: _projected_soc_schedule_attrs(coordinator),
+    ),
+    BatteryOptimizerSensorDescription(
         key="expected_savings",
         translation_key="expected_savings",
         native_unit_of_measurement="SEK",
@@ -259,6 +266,31 @@ def _plan_attrs(coordinator: BatteryOptimizerCoordinator) -> dict[str, Any]:
             }
             for interval in coordinator.data.intervals[:48]
         ],
+    }
+
+
+def _projected_soc_schedule_attrs(coordinator: BatteryOptimizerCoordinator) -> dict[str, Any]:
+    if not coordinator.data:
+        return {}
+    intervals = coordinator.data.intervals[:48]
+    soc_schedule = [
+        {
+            "time": interval.start.isoformat(),
+            "mode": interval.mode.value,
+            "target_power_kw": interval.target_power_kw,
+            "projected_soc_percent": interval.projected_soc_percent,
+            "price": interval.price,
+            "load_kw": interval.load_kw,
+            "reason": interval.reason,
+        }
+        for interval in intervals
+    ]
+    return {
+        "soc_schedule": soc_schedule,
+        "charge_schedule": [point for point in soc_schedule if point["mode"] == BatteryMode.CHARGE.value],
+        "discharge_schedule": [point for point in soc_schedule if point["mode"] == BatteryMode.DISCHARGE.value],
+        "hold_schedule": [point for point in soc_schedule if point["mode"] == BatteryMode.HOLD.value],
+        "note": "Projected SOC is the expected SOC after each planned interval has completed.",
     }
 
 

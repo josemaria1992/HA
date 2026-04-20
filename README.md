@@ -96,6 +96,7 @@ Created entities include:
 
 - `sensor.battery_optimizer_planned_mode`
 - `sensor.battery_optimizer_projected_soc`
+- `sensor.battery_optimizer_projected_soc_schedule`
 - `sensor.battery_optimizer_expected_value`
 - `sensor.battery_optimizer_cost_without_battery`
 - `sensor.battery_optimizer_cost_with_battery`
@@ -159,6 +160,8 @@ cards:
         name: Current SOC
       - entity: sensor.battery_optimizer_projected_soc
         name: Projected SOC next hour
+      - entity: sensor.battery_optimizer_projected_soc_schedule
+        name: Projected SOC schedule
       - entity: sensor.battery_optimizer_planned_mode
         name: Planned mode
       - entity: sensor.battery_optimizer_upcoming_charge_hours
