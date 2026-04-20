@@ -38,6 +38,7 @@ from .const import (
     CONF_MAX_DISCHARGE_POWER_KW,
     CONF_MAX_DISCHARGING_CURRENT_NUMBER,
     CONF_MIN_DWELL_INTERVALS,
+    CONF_OPTIMIZER_AGGRESSIVENESS,
     CONF_PEAK_SHAVING_A,
     CONF_PEAK_SHAVING_NUMBER,
     CONF_PEAK_SHAVING_RELEASE_A,
@@ -63,11 +64,13 @@ from .const import (
     DEFAULT_LOAD_HISTORY_DAYS,
     DEFAULT_MAIN_FUSE_A,
     DEFAULT_MIN_DWELL_INTERVALS,
+    DEFAULT_OPTIMIZER_AGGRESSIVENESS,
     DEFAULT_PEAK_SHAVING_A,
     DEFAULT_PREFERRED_MAX_SOC,
     DEFAULT_PRICE_HYSTERESIS,
     DEFAULT_RESERVE_SOC,
     DOMAIN,
+    AGGRESSIVENESS_OPTIONS,
 )
 
 
@@ -150,6 +153,7 @@ def _schema(defaults: dict[str, Any] | None = None, *, options: bool = False) ->
             required(CONF_HORIZON_HOURS, default=defaults.get(CONF_HORIZON_HOURS, DEFAULT_HORIZON_HOURS)): selector.NumberSelector(selector.NumberSelectorConfig(min=24, max=48, step=1, unit_of_measurement="h", mode=selector.NumberSelectorMode.BOX)),
             required(CONF_MIN_DWELL_INTERVALS, default=defaults.get(CONF_MIN_DWELL_INTERVALS, DEFAULT_MIN_DWELL_INTERVALS)): selector.NumberSelector(selector.NumberSelectorConfig(min=0, max=12, step=1, mode=selector.NumberSelectorMode.BOX)),
             required(CONF_PRICE_HYSTERESIS, default=defaults.get(CONF_PRICE_HYSTERESIS, DEFAULT_PRICE_HYSTERESIS)): selector.NumberSelector(selector.NumberSelectorConfig(min=0, max=5, step=0.01, mode=selector.NumberSelectorMode.BOX)),
+            required(CONF_OPTIMIZER_AGGRESSIVENESS, default=defaults.get(CONF_OPTIMIZER_AGGRESSIVENESS, DEFAULT_OPTIMIZER_AGGRESSIVENESS)): selector.SelectSelector(selector.SelectSelectorConfig(options=AGGRESSIVENESS_OPTIONS, mode=selector.SelectSelectorMode.DROPDOWN)),
             required(CONF_ADVISORY_ONLY, default=defaults.get(CONF_ADVISORY_ONLY, True)): bool,
             required(CONF_ALLOW_HIGH_PRICE_FULL_CHARGE, default=defaults.get(CONF_ALLOW_HIGH_PRICE_FULL_CHARGE, True)): bool,
             required(CONF_MAIN_FUSE_A, default=defaults.get(CONF_MAIN_FUSE_A, DEFAULT_MAIN_FUSE_A)): selector.NumberSelector(selector.NumberSelectorConfig(min=1, max=200, step=1, unit_of_measurement="A", mode=selector.NumberSelectorMode.BOX)),

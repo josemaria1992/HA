@@ -31,6 +31,7 @@ from .const import (
     CONF_MAX_DISCHARGE_POWER_KW,
     CONF_MAX_DISCHARGING_CURRENT_NUMBER,
     CONF_MIN_DWELL_INTERVALS,
+    CONF_OPTIMIZER_AGGRESSIVENESS,
     CONF_PREFERRED_MAX_SOC,
     CONF_PRICE_ENTITY,
     CONF_PRICE_HYSTERESIS,
@@ -116,6 +117,7 @@ class DataIngestor:
             interval_minutes=int(self.config.get(CONF_INTERVAL_MINUTES, DEFAULT_INTERVAL_MINUTES)),
             min_dwell_intervals=int(self.config[CONF_MIN_DWELL_INTERVALS]),
             price_hysteresis=float(self.config[CONF_PRICE_HYSTERESIS]),
+            optimizer_aggressiveness=str(self.config.get(CONF_OPTIMIZER_AGGRESSIVENESS, "balanced")),
             allow_high_price_full_charge=bool(self.config.get(CONF_ALLOW_HIGH_PRICE_FULL_CHARGE, True)),
         )
         return (

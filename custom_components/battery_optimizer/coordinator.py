@@ -15,8 +15,11 @@ from homeassistant.util import dt as dt_util
 from .backend import SolarmanBackend
 from .const import (
     CONF_ADVISORY_ONLY,
+    CONF_GRID_FEE_PER_KWH,
     CONF_LOAD_POWER_ENTITY,
     CONF_PHASE_POWER_ENTITIES,
+    CONF_PRICE_ENTITY,
+    DEFAULT_GRID_FEE_PER_KWH,
     DEFAULT_SCAN_INTERVAL,
     DOMAIN,
     OVERRIDE_AUTO,
@@ -87,6 +90,8 @@ class BatteryOptimizerCoordinator(DataUpdateCoordinator[OptimizationResult | Non
             self.monthly_savings = float(stored.get("monthly_savings", 0))
             self.monthly_energy_without_battery_kwh = float(stored.get("monthly_energy_without_battery_kwh", 0))
             self.monthly_energy_with_battery_kwh = float(stored.get("monthly_energy_with_battery_kwh", 0))
+        if self.monthly_cost_with_battery == 0 and self.monthly_energy_with_battery_kwh == 0:
+            await self._async_backfill_cost_totals()
 
     async def _async_update_data(self) -> OptimizationResult | None:
         seed_input, seed_status = self.ingestor.build_input(self._previous_mode, self._previous_mode_intervals)
@@ -264,6 +269,36 @@ class BatteryOptimizerCoordinator(DataUpdateCoordinator[OptimizationResult | Non
             }
         )
 
+    async def _async_backfill_cost_totals(self) -> None:
+        """Best-effort month/today cost backfill from recorder history."""
+
+        now = dt_util.now()
+        month_start = now.replace(day=1, hour=0, minute=0, second=0, microsecond=0)
+        today_start = now.replace(hour=0, minute=0, second=0, microsecond=0)
+        estimates = await self.hass.async_add_executor_job(
+            _estimate_costs_from_history,
+            self.hass,
+            self.config,
+            month_start,
+            now,
+            today_start,
+        )
+        if not estimates:
+            return
+        month = estimates["month"]
+        today = estimates["today"]
+        self.monthly_cost_without_battery = month["cost_without_battery"]
+        self.monthly_cost_with_battery = month["cost_with_battery"]
+        self.monthly_savings = month["cost_without_battery"] - month["cost_with_battery"]
+        self.monthly_energy_without_battery_kwh = month["energy_without_battery_kwh"]
+        self.monthly_energy_with_battery_kwh = month["energy_with_battery_kwh"]
+        self.daily_cost_without_battery = today["cost_without_battery"]
+        self.daily_cost_with_battery = today["cost_with_battery"]
+        self.daily_savings = today["cost_without_battery"] - today["cost_with_battery"]
+        self.daily_energy_without_battery_kwh = today["energy_without_battery_kwh"]
+        self.daily_energy_with_battery_kwh = today["energy_with_battery_kwh"]
+        await self._async_store_daily_totals()
+
 
 def get_coordinator(hass: HomeAssistant, entry: ConfigEntry) -> BatteryOptimizerCoordinator:
     return hass.data[DOMAIN][entry.entry_id]
@@ -321,3 +356,112 @@ def _read_number(hass: HomeAssistant, entity_id: str | None) -> float | None:
         return float(state.state)
     except ValueError:
         return None
+
+
+def _estimate_costs_from_history(
+    hass: HomeAssistant,
+    config: dict[str, Any],
+    start: datetime,
+    end: datetime,
+    today_start: datetime,
+) -> dict[str, dict[str, float]] | None:
+    """Estimate actual month/today costs from recorder history."""
+
+    load_entity = config.get(CONF_LOAD_POWER_ENTITY)
+    price_entity = config.get(CONF_PRICE_ENTITY)
+    phase_entities = config.get(CONF_PHASE_POWER_ENTITIES) or []
+    if not load_entity or not price_entity or not phase_entities:
+        return None
+    entities = [load_entity, price_entity, *phase_entities]
+    histories = _history_series(hass, entities, start, end)
+    if not histories:
+        return None
+
+    fee = float(config.get(CONF_GRID_FEE_PER_KWH, DEFAULT_GRID_FEE_PER_KWH))
+    month = _empty_cost_totals()
+    today = _empty_cost_totals()
+    step = timedelta(minutes=5)
+    cursor = start
+    while cursor < end:
+        next_cursor = min(cursor + step, end)
+        hours = (next_cursor - cursor).total_seconds() / 3600
+        load_kw = _series_value_at(histories.get(load_entity, []), cursor)
+        price = _series_value_at(histories.get(price_entity, []), cursor)
+        phase_values = [_series_value_at(histories.get(entity_id, []), cursor) for entity_id in phase_entities]
+        if load_kw is None or price is None or any(value is None for value in phase_values):
+            cursor = next_cursor
+            continue
+        load_kw = _normalise_kw(load_kw)
+        grid_kw = sum(max(_normalise_kw(value or 0), 0) for value in phase_values)
+        all_in_price = price + fee
+        baseline_kwh = max(load_kw, 0) * hours
+        actual_kwh = max(grid_kw, 0) * hours
+        _add_cost_sample(month, baseline_kwh, actual_kwh, all_in_price)
+        if cursor >= today_start:
+            _add_cost_sample(today, baseline_kwh, actual_kwh, all_in_price)
+        cursor = next_cursor
+    return {"month": month, "today": today}
+
+
+def _history_series(
+    hass: HomeAssistant,
+    entity_ids: list[str],
+    start: datetime,
+    end: datetime,
+) -> dict[str, list[tuple[datetime, float]]]:
+    try:
+        from homeassistant.components.recorder.history import state_changes_during_period
+    except Exception:  # noqa: BLE001
+        return {}
+    try:
+        raw = state_changes_during_period(hass, start, end, entity_ids, no_attributes=True)
+    except Exception:  # noqa: BLE001
+        return {}
+    series: dict[str, list[tuple[datetime, float]]] = {}
+    for entity_id in entity_ids:
+        points: list[tuple[datetime, float]] = []
+        for state in raw.get(entity_id, []):
+            value = _coerce_float_state(state.state)
+            if value is not None:
+                points.append((dt_util.as_local(state.last_changed), value))
+        current = _read_number(hass, entity_id)
+        if current is not None:
+            points.append((end, current))
+        series[entity_id] = sorted(points, key=lambda item: item[0])
+    return series
+
+
+def _series_value_at(series: list[tuple[datetime, float]], when: datetime) -> float | None:
+    value = None
+    for point_time, point_value in series:
+        if point_time > when:
+            break
+        value = point_value
+    return value
+
+
+def _coerce_float_state(value: Any) -> float | None:
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return None
+
+
+def _normalise_kw(value: float) -> float:
+    return value / 1000 if abs(value) > 50 else value
+
+
+def _empty_cost_totals() -> dict[str, float]:
+    return {
+        "cost_without_battery": 0.0,
+        "cost_with_battery": 0.0,
+        "energy_without_battery_kwh": 0.0,
+        "energy_with_battery_kwh": 0.0,
+    }
+
+
+def _add_cost_sample(totals: dict[str, float], baseline_kwh: float, actual_kwh: float, price: float) -> None:
+    totals["energy_without_battery_kwh"] += baseline_kwh
+    totals["energy_with_battery_kwh"] += actual_kwh
+    totals["cost_without_battery"] += baseline_kwh * price
+    totals["cost_with_battery"] += actual_kwh * price

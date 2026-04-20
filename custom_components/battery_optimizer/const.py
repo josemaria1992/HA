@@ -19,6 +19,7 @@ DEFAULT_DEGRADATION_COST = 0.15
 DEFAULT_GRID_FEE_PER_KWH = 0.773
 DEFAULT_LOAD_HISTORY_DAYS = 28
 DEFAULT_LOAD_FORECAST_MIN_SAMPLES = 3
+DEFAULT_OPTIMIZER_AGGRESSIVENESS = "balanced"
 DEFAULT_MAIN_FUSE_A = 20.0
 DEFAULT_PEAK_SHAVING_A = 24.0
 DEFAULT_BATTERY_VOLTAGE = 51.2
@@ -45,6 +46,7 @@ CONF_INTERVAL_MINUTES = "interval_minutes"
 CONF_HORIZON_HOURS = "horizon_hours"
 CONF_MIN_DWELL_INTERVALS = "min_dwell_intervals"
 CONF_PRICE_HYSTERESIS = "price_hysteresis"
+CONF_OPTIMIZER_AGGRESSIVENESS = "optimizer_aggressiveness"
 CONF_ADVISORY_ONLY = "advisory_only"
 CONF_ALLOW_HIGH_PRICE_FULL_CHARGE = "allow_high_price_full_charge"
 CONF_MAIN_FUSE_A = "main_fuse_a"
@@ -66,6 +68,8 @@ CONF_PROGRAM_SOC_NUMBERS = "program_soc_numbers"
 CONF_PHASE_CURRENT_ENTITIES = "phase_current_entities"
 CONF_PHASE_POWER_ENTITIES = "phase_power_entities"
 CONF_PHASE_VOLTAGE_ENTITIES = "phase_voltage_entities"
+
+AGGRESSIVENESS_OPTIONS = ["conservative", "balanced", "aggressive"]
 
 OVERRIDE_AUTO = "auto"
 OVERRIDE_FORCE_CHARGE = "force_charge"

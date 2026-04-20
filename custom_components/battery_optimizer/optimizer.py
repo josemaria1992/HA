@@ -53,6 +53,7 @@ class BatteryConstraints:
     interval_minutes: int
     min_dwell_intervals: int
     price_hysteresis: float
+    optimizer_aggressiveness: str = "balanced"
     allow_high_price_full_charge: bool = True
 
 
@@ -195,7 +196,6 @@ def optimize(input_data: OptimizationInput) -> OptimizationResult:
         charge_windows,
         discharge_windows,
         future_value,
-        effective_spread > profitable_spread,
     )
 
     loads = [point.load_kw for point in input_data.load_forecast]
@@ -345,7 +345,6 @@ def _optimize_dp(
     charge_windows: set[datetime],
     discharge_windows: set[datetime],
     future_value: list[float],
-    allow_cycle: bool,
 ) -> OptimizationResult:
     """Optimize the horizon with dependency-free dynamic programming."""
 
@@ -371,6 +370,11 @@ def _optimize_dp(
         states.append(_quantize(max_kwh, step, reserve_kwh, max_kwh))
     states = sorted(set(states))
     loads = [point.load_kw for point in input_data.load_forecast]
+    initial_dwell_remaining = _dwell_remaining(
+        input_data.previous_mode,
+        input_data.previous_mode_intervals,
+        constraints.min_dwell_intervals,
+    )
 
     dp: dict[float, tuple[float, list[dict[str, float | BatteryMode | str]]]] = {initial_state: (0.0, [])}
     for index, point in enumerate(prices):
@@ -380,20 +384,20 @@ def _optimize_dp(
         next_dp: dict[float, tuple[float, list[dict[str, float | BatteryMode | str]]]] = {}
 
         for soc_kwh, (cost_so_far, actions) in dp.items():
-            candidates = _dp_actions(
-                soc_kwh,
-                reserve_kwh,
-                max_kwh,
-                constraints,
-                interval_hours,
-                load_kwh,
-                all_in_price,
-                point.start,
-                charge_windows,
-                discharge_windows,
-                future_value[index + 1] if index + 1 < len(future_value) else 0,
-                allow_cycle,
-            )
+            if index < initial_dwell_remaining:
+                candidates = [_dp_hold_action(soc_kwh, load_kwh, all_in_price, "Holding to satisfy minimum dwell time.")]
+            else:
+                candidates = _dp_actions(
+                    soc_kwh,
+                    reserve_kwh,
+                    max_kwh,
+                    constraints,
+                    interval_hours,
+                    load_kwh,
+                    all_in_price,
+                    point.start,
+                    future_value[index + 1] if index + 1 < len(future_value) else 0,
+                )
             for candidate in candidates:
                 next_soc = _quantize(float(candidate["next_soc_kwh"]), step, reserve_kwh, max_kwh)
                 total_cost = cost_so_far + float(candidate["cost"])
@@ -469,7 +473,11 @@ def _optimize_dp(
         projected_cost_with_battery=round(projected_cost_with_battery, 3),
         current_mode=current.mode if current else BatteryMode.HOLD,
         projected_soc_percent=current.projected_soc_percent if current else constraints.soc_percent,
-        reasons=[*reasons, "Used dependency-free dynamic programming over discretized SOC states.", *([current.reason] if current else [])],
+        reasons=[
+            *reasons,
+            f"Used dependency-free dynamic programming over discretized SOC states with {constraints.optimizer_aggressiveness} aggressiveness.",
+            *([current.reason] if current else []),
+        ],
         cheapest_charge_windows=sorted(charge_windows)[:6],
         best_discharge_windows=sorted(discharge_windows)[:6],
         valid=True,
@@ -485,66 +493,83 @@ def _dp_actions(
     load_kwh: float,
     all_in_price: float,
     start: datetime,
-    charge_windows: set[datetime],
-    discharge_windows: set[datetime],
     future_stored_value: float,
-    allow_cycle: bool,
 ) -> list[dict[str, float | BatteryMode | str]]:
+    cycle_penalty = _cycle_penalty(constraints)
     actions: list[dict[str, float | BatteryMode | str]] = [
-        {
-            "mode": BatteryMode.HOLD,
-            "next_soc_kwh": soc_kwh,
-            "grid_kwh": load_kwh,
-            "battery_discharge_kwh": 0.0,
-            "target_power_kw": 0.0,
-            "cost": load_kwh * all_in_price,
-            "reason": "Holding because this interval is not worth cycling.",
-        }
+        _dp_hold_action(soc_kwh, load_kwh, all_in_price, "Holding because this interval is not worth cycling.")
     ]
 
     charge_room = max(max_kwh - soc_kwh, 0)
-    if allow_cycle and start in charge_windows and charge_room > 0.01:
+    if charge_room > 0.01:
         max_grid_charge = constraints.max_charge_kw * interval_hours
         grid_charge = min(max_grid_charge, charge_room / constraints.charge_efficiency)
         stored = grid_charge * constraints.charge_efficiency
-        charge_cost_per_stored = all_in_price / constraints.charge_efficiency
-        if future_stored_value > charge_cost_per_stored + constraints.price_hysteresis:
-            actions.append(
-                {
-                    "mode": BatteryMode.CHARGE,
-                    "next_soc_kwh": min(soc_kwh + stored, max_kwh),
-                    "grid_kwh": load_kwh + grid_charge,
-                    "battery_discharge_kwh": 0.0,
-                    "target_power_kw": grid_charge / interval_hours,
-                    "cost": (load_kwh + grid_charge) * all_in_price,
-                    "reason": f"Charging for a later higher-value interval; all-in price {all_in_price:.3f}.",
-                }
-            )
+        actions.append(
+            {
+                "mode": BatteryMode.CHARGE,
+                "next_soc_kwh": min(soc_kwh + stored, max_kwh),
+                "grid_kwh": load_kwh + grid_charge,
+                "battery_discharge_kwh": 0.0,
+                "target_power_kw": grid_charge / interval_hours,
+                "cost": (load_kwh + grid_charge) * all_in_price + stored * cycle_penalty,
+                "reason": f"Charging because DP found this reduces later all-in grid cost; all-in price {all_in_price:.3f}.",
+            }
+        )
 
     usable = max(soc_kwh - reserve_kwh, 0)
-    if allow_cycle and start in discharge_windows and usable > 0.01 and load_kwh > 0:
+    if usable > 0.01 and load_kwh > 0:
         max_battery_discharge = constraints.max_discharge_kw * interval_hours / constraints.discharge_efficiency
         battery_discharge = min(max_battery_discharge, usable, load_kwh / constraints.discharge_efficiency)
         delivered = battery_discharge * constraints.discharge_efficiency
-        current_value = all_in_price * constraints.discharge_efficiency - constraints.degradation_cost_per_kwh
-        if current_value >= future_stored_value - constraints.price_hysteresis:
-            grid_kwh = max(load_kwh - delivered, 0)
-            actions.append(
-                {
-                    "mode": BatteryMode.DISCHARGE,
-                    "next_soc_kwh": max(soc_kwh - battery_discharge, reserve_kwh),
-                    "grid_kwh": grid_kwh,
-                    "battery_discharge_kwh": battery_discharge,
-                    "target_power_kw": delivered / interval_hours,
-                    "cost": grid_kwh * all_in_price + battery_discharge * constraints.degradation_cost_per_kwh,
-                    "reason": f"Discharging into forecast load during a high-value interval; all-in price {all_in_price:.3f}.",
-                }
-            )
+        grid_kwh = max(load_kwh - delivered, 0)
+        actions.append(
+            {
+                "mode": BatteryMode.DISCHARGE,
+                "next_soc_kwh": max(soc_kwh - battery_discharge, reserve_kwh),
+                "grid_kwh": grid_kwh,
+                "battery_discharge_kwh": battery_discharge,
+                "target_power_kw": delivered / interval_hours,
+                "cost": (
+                    grid_kwh * all_in_price
+                    + battery_discharge * constraints.degradation_cost_per_kwh
+                    + battery_discharge * cycle_penalty
+                    + max(future_stored_value - (all_in_price * constraints.discharge_efficiency), 0) * battery_discharge
+                ),
+                "reason": f"Discharging because DP found this lowers all-in grid cost for forecast load; all-in price {all_in_price:.3f}.",
+            }
+        )
     return actions
+
+
+def _dp_hold_action(
+    soc_kwh: float,
+    load_kwh: float,
+    all_in_price: float,
+    reason: str,
+) -> dict[str, float | BatteryMode | str]:
+    return {
+        "mode": BatteryMode.HOLD,
+        "next_soc_kwh": soc_kwh,
+        "grid_kwh": load_kwh,
+        "battery_discharge_kwh": 0.0,
+        "target_power_kw": 0.0,
+        "cost": load_kwh * all_in_price,
+        "reason": reason,
+    }
 
 
 def _quantize(value: float, step: float, minimum: float, maximum: float) -> float:
     return round(min(max(round(value / step) * step, minimum), maximum), 3)
+
+
+def _cycle_penalty(constraints: BatteryConstraints) -> float:
+    multipliers = {
+        "conservative": 2.0,
+        "balanced": 1.0,
+        "aggressive": 0.25,
+    }
+    return constraints.price_hysteresis * multipliers.get(constraints.optimizer_aggressiveness, 1.0)
 
 
 def _dwell_remaining(previous_mode: BatteryMode | None, previous_intervals: int, minimum: int) -> int:

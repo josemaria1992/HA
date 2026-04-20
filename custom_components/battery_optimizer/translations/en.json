@@ -29,6 +29,7 @@
           "horizon_hours": "Planning horizon hours",
           "min_dwell_intervals": "Minimum dwell intervals",
           "price_hysteresis": "Price hysteresis",
+          "optimizer_aggressiveness": "Optimizer aggressiveness",
           "advisory_only": "Advisory-only mode",
           "allow_high_price_full_charge": "Allow 100% charge for high-price windows",
           "main_fuse_a": "Main fuse rating",

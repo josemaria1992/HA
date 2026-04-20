@@ -41,6 +41,7 @@ def _input(prices: list[float], soc: float = 50) -> OptimizationInput:
             interval_minutes=60,
             min_dwell_intervals=0,
             price_hysteresis=0.01,
+            optimizer_aggressiveness="balanced",
         ),
     )
 
@@ -101,6 +102,7 @@ def test_dwell_hold_does_not_move_projected_soc() -> None:
             interval_minutes=input_data.constraints.interval_minutes,
             min_dwell_intervals=2,
             price_hysteresis=input_data.constraints.price_hysteresis,
+            optimizer_aggressiveness=input_data.constraints.optimizer_aggressiveness,
         ),
         previous_mode=BatteryMode.DISCHARGE,
         previous_mode_intervals=1,

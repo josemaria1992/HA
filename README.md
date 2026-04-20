@@ -45,6 +45,10 @@ You will be asked for:
 - Charge and discharge efficiency
 - Battery voltage entity or fallback nominal voltage, used to convert Solarman amps into kW and planned kW back into amps
 - Tax and grid fees per kWh. Default: `0.773 SEK/kWh`
+- Optimizer aggressiveness:
+  - `conservative`: higher cycling penalty
+  - `balanced`: default
+  - `aggressive`: lower cycling penalty for more invoice-focused battery use
 - Safety limits:
   - Reserve SOC: default `10%`
   - Preferred max SOC: default `90%`
@@ -88,6 +92,7 @@ Before real control is enabled, confirm these values in the config flow:
 - `sensor.inverter_battery_voltage` reports battery voltage in volts.
 - `number.inverter_battery_max_charging_current` and `number.inverter_battery_max_discharging_current` are the actual safety current limits in amps.
 - `sensor.inverter_external_ct1_power`, `ct2`, and `ct3` represent live grid import/export per phase. Daily savings uses positive import from these sensors.
+- Month-to-date and today cost sensors are backfilled from recorder history when possible. If recorder history or historical price states are missing, they start accumulating from the current runtime.
 - The inverter peak shaving number still expects total watts, but Battery Optimizer watches individual phase currents and dynamically lowers that total-watt threshold when any phase reaches the per-phase limit.
 
 ## Entities
@@ -312,9 +317,9 @@ The optimizer uses dependency-free dynamic programming rather than a heavy MILP 
 3. Computes low and high price thresholds from the 30th and 70th percentiles.
 4. Estimates whether the spread is profitable after round-trip efficiency, degradation cost, and hysteresis.
 5. Discretizes battery SOC into small states and searches for the lowest-cost path through the horizon.
-6. Looks forward through the remaining horizon to estimate the best future value of one stored battery kWh.
-7. Charges in low-price intervals only when a later discharge opportunity is valuable enough.
-8. Discharges in high-price intervals when current stored-energy value is among the best remaining uses.
+6. Evaluates charge, hold, and discharge in every interval instead of hard-blocking decisions by percentile thresholds.
+7. Adds degradation and aggressiveness-scaled cycling penalty directly into the objective.
+8. Uses future stored-energy value to avoid wasting battery before better later peaks.
 9. Caps discharge by the load forecast so the plan avoids discharging beyond expected household consumption.
 10. Holds when the spread is not worth cycling the battery.
 11. Applies hysteresis and minimum dwell intervals to reduce charge/discharge oscillation.
