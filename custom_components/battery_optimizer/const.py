@@ -1,0 +1,85 @@
+"""Constants for Battery Optimizer."""
+
+from __future__ import annotations
+
+from datetime import timedelta
+
+DOMAIN = "battery_optimizer"
+PLATFORMS = ["sensor", "select", "switch", "button"]
+
+DEFAULT_SCAN_INTERVAL = timedelta(seconds=30)
+DEFAULT_INTERVAL_MINUTES = 60
+DEFAULT_HORIZON_HOURS = 36
+DEFAULT_RESERVE_SOC = 10.0
+DEFAULT_PREFERRED_MAX_SOC = 90.0
+DEFAULT_HARD_MAX_SOC = 100.0
+DEFAULT_MIN_DWELL_INTERVALS = 2
+DEFAULT_PRICE_HYSTERESIS = 0.02
+DEFAULT_DEGRADATION_COST = 0.15
+DEFAULT_MAIN_FUSE_A = 20.0
+DEFAULT_PEAK_SHAVING_A = 24.0
+DEFAULT_BATTERY_VOLTAGE = 51.2
+
+CONF_PRICE_ENTITY = "price_entity"
+CONF_LOAD_POWER_ENTITY = "load_power_entity"
+CONF_LOAD_FORECAST_ENTITY = "load_forecast_entity"
+CONF_BATTERY_SOC_ENTITY = "battery_soc_entity"
+CONF_BATTERY_STATE_ENTITY = "battery_state_entity"
+CONF_BATTERY_CAPACITY_KWH = "battery_capacity_kwh"
+CONF_BATTERY_CAPACITY_ENTITY = "battery_capacity_entity"
+CONF_MAX_CHARGE_POWER_KW = "max_charge_power_kw"
+CONF_MAX_DISCHARGE_POWER_KW = "max_discharge_power_kw"
+CONF_CHARGE_EFFICIENCY = "charge_efficiency"
+CONF_DISCHARGE_EFFICIENCY = "discharge_efficiency"
+CONF_RESERVE_SOC = "reserve_soc"
+CONF_PREFERRED_MAX_SOC = "preferred_max_soc"
+CONF_HARD_MAX_SOC = "hard_max_soc"
+CONF_DEGRADATION_COST = "degradation_cost"
+CONF_INTERVAL_MINUTES = "interval_minutes"
+CONF_HORIZON_HOURS = "horizon_hours"
+CONF_MIN_DWELL_INTERVALS = "min_dwell_intervals"
+CONF_PRICE_HYSTERESIS = "price_hysteresis"
+CONF_ADVISORY_ONLY = "advisory_only"
+CONF_ALLOW_HIGH_PRICE_FULL_CHARGE = "allow_high_price_full_charge"
+CONF_MAIN_FUSE_A = "main_fuse_a"
+CONF_PEAK_SHAVING_A = "peak_shaving_a"
+CONF_BATTERY_NOMINAL_VOLTAGE = "battery_nominal_voltage"
+CONF_BATTERY_VOLTAGE_ENTITY = "battery_voltage_entity"
+CONF_PHASE_PEAK_SHAVING_ENABLED = "phase_peak_shaving_enabled"
+CONF_PEAK_SHAVING_RELEASE_A = "peak_shaving_release_a"
+
+CONF_SOLARMAN_ENABLED = "solarman_enabled"
+CONF_GRID_CHARGING_SWITCH = "grid_charging_switch"
+CONF_GRID_CHARGING_CURRENT_NUMBER = "grid_charging_current_number"
+CONF_MAX_CHARGING_CURRENT_NUMBER = "max_charging_current_number"
+CONF_MAX_DISCHARGING_CURRENT_NUMBER = "max_discharging_current_number"
+CONF_PEAK_SHAVING_SWITCH = "peak_shaving_switch"
+CONF_PEAK_SHAVING_NUMBER = "peak_shaving_number"
+CONF_WORK_MODE_SELECT = "work_mode_select"
+CONF_PROGRAM_SOC_NUMBERS = "program_soc_numbers"
+CONF_PHASE_CURRENT_ENTITIES = "phase_current_entities"
+CONF_PHASE_VOLTAGE_ENTITIES = "phase_voltage_entities"
+
+OVERRIDE_AUTO = "auto"
+OVERRIDE_FORCE_CHARGE = "force_charge"
+OVERRIDE_HOLD = "hold"
+OVERRIDE_FORCE_DISCHARGE = "force_discharge"
+OVERRIDE_OPTIONS = [
+    OVERRIDE_AUTO,
+    OVERRIDE_FORCE_CHARGE,
+    OVERRIDE_HOLD,
+    OVERRIDE_FORCE_DISCHARGE,
+]
+
+MODE_CHARGE = "charge"
+MODE_DISCHARGE = "discharge"
+MODE_HOLD = "hold"
+MODE_UNAVAILABLE = "unavailable"
+
+ATTR_REASONS = "reasons"
+ATTR_PLAN = "plan"
+ATTR_WINDOWS = "windows"
+ATTR_PHASE_PEAK_SHAVING = "phase_peak_shaving"
+
+SERVICE_SET_OVERRIDE = "set_override"
+SERVICE_APPLY_NOW = "apply_now"

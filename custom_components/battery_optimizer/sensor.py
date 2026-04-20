@@ -1,0 +1,131 @@
+"""Sensors for Battery Optimizer."""
+
+from __future__ import annotations
+
+from collections.abc import Callable
+from dataclasses import dataclass
+from typing import Any
+
+from homeassistant.components.sensor import SensorEntity, SensorEntityDescription
+from homeassistant.config_entries import ConfigEntry
+from homeassistant.core import HomeAssistant
+from homeassistant.helpers.entity_platform import AddEntitiesCallback
+from homeassistant.helpers.update_coordinator import CoordinatorEntity
+
+from .const import ATTR_PLAN, ATTR_REASONS, ATTR_WINDOWS, DOMAIN
+from .coordinator import BatteryOptimizerCoordinator, get_coordinator
+
+
+@dataclass(frozen=True, kw_only=True)
+class BatteryOptimizerSensorDescription(SensorEntityDescription):
+    """Sensor description with a value callback."""
+
+    value_fn: Callable[[BatteryOptimizerCoordinator], Any]
+    attrs_fn: Callable[[BatteryOptimizerCoordinator], dict[str, Any]] = lambda coordinator: {}
+
+
+SENSORS: tuple[BatteryOptimizerSensorDescription, ...] = (
+    BatteryOptimizerSensorDescription(
+        key="planned_mode",
+        translation_key="planned_mode",
+        value_fn=lambda coordinator: coordinator.data.current_mode.value if coordinator.data else None,
+        attrs_fn=lambda coordinator: _plan_attrs(coordinator),
+    ),
+    BatteryOptimizerSensorDescription(
+        key="projected_soc",
+        translation_key="projected_soc",
+        native_unit_of_measurement="%",
+        value_fn=lambda coordinator: coordinator.data.projected_soc_percent if coordinator.data else None,
+    ),
+    BatteryOptimizerSensorDescription(
+        key="expected_savings",
+        translation_key="expected_savings",
+        native_unit_of_measurement="SEK",
+        value_fn=lambda coordinator: coordinator.data.expected_savings if coordinator.data else None,
+    ),
+    BatteryOptimizerSensorDescription(
+        key="cheapest_charge_windows",
+        translation_key="cheapest_charge_windows",
+        value_fn=lambda coordinator: len(coordinator.data.cheapest_charge_windows) if coordinator.data else None,
+        attrs_fn=lambda coordinator: {ATTR_WINDOWS: [item.isoformat() for item in coordinator.data.cheapest_charge_windows]} if coordinator.data else {},
+    ),
+    BatteryOptimizerSensorDescription(
+        key="best_discharge_windows",
+        translation_key="best_discharge_windows",
+        value_fn=lambda coordinator: len(coordinator.data.best_discharge_windows) if coordinator.data else None,
+        attrs_fn=lambda coordinator: {ATTR_WINDOWS: [item.isoformat() for item in coordinator.data.best_discharge_windows]} if coordinator.data else {},
+    ),
+    BatteryOptimizerSensorDescription(
+        key="decision_reasons",
+        translation_key="decision_reasons",
+        value_fn=lambda coordinator: coordinator.data.reasons[0] if coordinator.data and coordinator.data.reasons else None,
+        attrs_fn=lambda coordinator: {ATTR_REASONS: coordinator.data.reasons} if coordinator.data else {},
+    ),
+    BatteryOptimizerSensorDescription(
+        key="last_command",
+        translation_key="last_command",
+        value_fn=lambda coordinator: coordinator.last_applied_message,
+    ),
+)
+
+
+async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry, async_add_entities: AddEntitiesCallback) -> None:
+    """Set up sensors."""
+
+    coordinator = get_coordinator(hass, entry)
+    async_add_entities(BatteryOptimizerSensor(coordinator, entry, description) for description in SENSORS)
+
+
+class BatteryOptimizerSensor(CoordinatorEntity[BatteryOptimizerCoordinator], SensorEntity):
+    """Battery optimizer sensor."""
+
+    entity_description: BatteryOptimizerSensorDescription
+    _attr_has_entity_name = True
+
+    def __init__(
+        self,
+        coordinator: BatteryOptimizerCoordinator,
+        entry: ConfigEntry,
+        description: BatteryOptimizerSensorDescription,
+    ) -> None:
+        super().__init__(coordinator)
+        self.entity_description = description
+        self._attr_unique_id = f"{entry.entry_id}_{description.key}"
+        self._attr_device_info = {
+            "identifiers": {(DOMAIN, entry.entry_id)},
+            "name": entry.title,
+            "manufacturer": "Battery Optimizer",
+        }
+
+    @property
+    def native_value(self) -> Any:
+        return self.entity_description.value_fn(self.coordinator)
+
+    @property
+    def extra_state_attributes(self) -> dict[str, Any]:
+        return self.entity_description.attrs_fn(self.coordinator)
+
+    @property
+    def available(self) -> bool:
+        if self.entity_description.key == "last_command":
+            return True
+        return bool(self.coordinator.data and self.coordinator.data.valid)
+
+
+def _plan_attrs(coordinator: BatteryOptimizerCoordinator) -> dict[str, Any]:
+    if not coordinator.data:
+        return {}
+    return {
+        ATTR_REASONS: coordinator.data.reasons,
+        ATTR_PLAN: [
+            {
+                "start": interval.start.isoformat(),
+                "mode": interval.mode.value,
+                "target_power_kw": interval.target_power_kw,
+                "projected_soc_percent": interval.projected_soc_percent,
+                "price": interval.price,
+                "reason": interval.reason,
+            }
+            for interval in coordinator.data.intervals[:48]
+        ],
+    }

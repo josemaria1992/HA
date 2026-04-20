@@ -1,0 +1,18 @@
+type: vertical-stack
+cards:
+  - type: entities
+    title: Battery Optimizer
+    entities:
+      - sensor.battery_optimizer_planned_mode
+      - sensor.battery_optimizer_projected_soc
+      - sensor.battery_optimizer_expected_value
+      - sensor.battery_optimizer_decision_reasons
+      - select.battery_optimizer_override_mode
+      - switch.battery_optimizer_advisory_only_mode
+      - button.battery_optimizer_apply_current_plan
+  - type: entities
+    title: Charge and Discharge Windows
+    entities:
+      - sensor.battery_optimizer_cheapest_charge_windows
+      - sensor.battery_optimizer_best_discharge_windows
+

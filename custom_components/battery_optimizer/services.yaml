@@ -1,0 +1,18 @@
+set_override:
+  name: Set override
+  description: Set manual override mode for Battery Optimizer.
+  fields:
+    mode:
+      name: Mode
+      description: Override mode.
+      required: true
+      selector:
+        select:
+          options:
+            - auto
+            - force_charge
+            - hold
+            - force_discharge
+apply_now:
+  name: Apply now
+  description: Apply the current optimized interval to the configured backend.

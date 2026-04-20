@@ -1,0 +1,24 @@
+price_entity: sensor.nordpool_kwh_se4_sek_3_10_025
+load_power_entity: sensor.inverter_load_power
+battery_soc_entity: sensor.inverter_battery
+battery_state_entity: sensor.inverter_battery_state
+battery_capacity_entity: sensor.inverter_battery_capacity
+battery_voltage_entity: sensor.inverter_battery_voltage
+
+grid_charging_switch: switch.inverter_battery_grid_charging
+grid_charging_current_number: number.inverter_battery_grid_charging_current
+max_charging_current_number: number.inverter_battery_max_charging_current
+max_discharging_current_number: number.inverter_battery_max_discharging_current
+
+peak_shaving_switch: switch.inverter_grid_peak_shaving
+peak_shaving_number: number.inverter_grid_peak_shaving
+work_mode_select: select.inverter_work_mode
+
+phase_current_entities:
+  - sensor.inverter_external_ct1_current
+  - sensor.inverter_external_ct2_current
+  - sensor.inverter_external_ct3_current
+phase_voltage_entities:
+  - sensor.inverter_grid_l1_voltage
+  - sensor.inverter_grid_l2_voltage
+  - sensor.inverter_grid_l3_voltage

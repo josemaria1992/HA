@@ -1,0 +1,12 @@
+{
+  "domain": "battery_optimizer",
+  "name": "Battery Optimizer",
+  "codeowners": [],
+  "config_flow": true,
+  "dependencies": [],
+  "documentation": "https://github.com/custom-components/battery_optimizer",
+  "iot_class": "local_polling",
+  "issue_tracker": "https://github.com/custom-components/battery_optimizer/issues",
+  "requirements": [],
+  "version": "0.1.0"
+}

@@ -1,0 +1,79 @@
+{
+  "title": "Battery Optimizer",
+  "config": {
+    "step": {
+      "user": {
+        "title": "Battery Optimizer",
+        "description": "Set up spot-price battery optimization. Advisory-only mode is enabled by default.",
+        "data": {
+          "name": "Name",
+          "price_entity": "Nord Pool price entity",
+          "load_power_entity": "Current load power entity",
+          "load_forecast_entity": "Optional load forecast entity",
+          "battery_soc_entity": "Battery SOC entity",
+          "battery_state_entity": "Battery state entity",
+          "battery_capacity_entity": "Battery capacity entity",
+          "battery_capacity_kwh": "Battery capacity",
+          "max_charge_power_kw": "Maximum charge power",
+          "max_discharge_power_kw": "Maximum discharge power",
+          "charge_efficiency": "Charge efficiency",
+          "discharge_efficiency": "Discharge efficiency",
+          "reserve_soc": "Reserve SOC",
+          "preferred_max_soc": "Preferred max SOC",
+          "hard_max_soc": "Hard max SOC",
+          "degradation_cost": "Battery degradation cost per kWh",
+          "interval_minutes": "Plan interval minutes",
+          "horizon_hours": "Planning horizon hours",
+          "min_dwell_intervals": "Minimum dwell intervals",
+          "price_hysteresis": "Price hysteresis",
+          "advisory_only": "Advisory-only mode",
+          "allow_high_price_full_charge": "Allow 100% charge for high-price windows",
+          "main_fuse_a": "Main fuse rating",
+          "peak_shaving_a": "Peak shaving threshold",
+          "peak_shaving_release_a": "Peak shaving release threshold",
+          "phase_peak_shaving_enabled": "Enable per-phase peak shaving",
+          "battery_voltage_entity": "Battery voltage entity",
+          "battery_nominal_voltage": "Battery nominal voltage",
+          "solarman_enabled": "Use Solarman backend",
+          "grid_charging_switch": "Grid charging switch",
+          "grid_charging_current_number": "Grid charging current number",
+          "max_charging_current_number": "Max charging current number",
+          "max_discharging_current_number": "Max discharging current number",
+          "peak_shaving_switch": "Peak shaving switch",
+          "peak_shaving_number": "Peak shaving threshold number",
+          "work_mode_select": "Work mode select",
+          "program_soc_numbers": "Program SOC number entities",
+          "phase_current_entities": "Phase current entities",
+          "phase_voltage_entities": "Phase voltage entities"
+        }
+      }
+    },
+    "error": {
+      "soc_limits": "SOC limits must be reserve < preferred max <= hard max.",
+      "peak_below_fuse": "Peak shaving threshold should be at or above the fuse rating.",
+      "release_above_peak": "Peak shaving release threshold must be below the trigger threshold.",
+      "positive": "This value must be positive.",
+      "non_negative": "This value cannot be negative."
+    }
+  },
+  "entity": {
+    "sensor": {
+      "planned_mode": { "name": "Planned mode" },
+      "projected_soc": { "name": "Projected SOC" },
+      "expected_savings": { "name": "Expected value" },
+      "cheapest_charge_windows": { "name": "Cheapest charge windows" },
+      "best_discharge_windows": { "name": "Best discharge windows" },
+      "decision_reasons": { "name": "Decision reasons" },
+      "last_command": { "name": "Last command" }
+    },
+    "select": {
+      "override_mode": { "name": "Override mode" }
+    },
+    "switch": {
+      "advisory_only": { "name": "Advisory-only mode" }
+    },
+    "button": {
+      "apply_now": { "name": "Apply current plan" }
+    }
+  }
+}
