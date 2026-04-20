@@ -58,6 +58,7 @@ CONF_PEAK_SHAVING_NUMBER = "peak_shaving_number"
 CONF_WORK_MODE_SELECT = "work_mode_select"
 CONF_PROGRAM_SOC_NUMBERS = "program_soc_numbers"
 CONF_PHASE_CURRENT_ENTITIES = "phase_current_entities"
+CONF_PHASE_POWER_ENTITIES = "phase_power_entities"
 CONF_PHASE_VOLTAGE_ENTITIES = "phase_voltage_entities"
 
 OVERRIDE_AUTO = "auto"

@@ -44,6 +44,7 @@
           "work_mode_select": "Work mode select",
           "program_soc_numbers": "Program SOC number entities",
           "phase_current_entities": "Phase current entities",
+          "phase_power_entities": "Phase power entities",
           "phase_voltage_entities": "Phase voltage entities"
         }
       }
@@ -63,6 +64,11 @@
       "expected_savings": { "name": "Expected value" },
       "cost_without_battery": { "name": "Cost without battery" },
       "cost_with_battery": { "name": "Cost with battery" },
+      "daily_cost_without_battery": { "name": "Daily cost without battery" },
+      "daily_cost_with_battery": { "name": "Daily cost with battery" },
+      "daily_savings": { "name": "Daily savings" },
+      "daily_energy_without_battery": { "name": "Daily energy without battery" },
+      "daily_energy_with_battery": { "name": "Daily energy with battery" },
       "cheapest_charge_windows": { "name": "Cheapest charge windows" },
       "best_discharge_windows": { "name": "Best discharge windows" },
       "upcoming_charge_hours": { "name": "Upcoming charge hours" },

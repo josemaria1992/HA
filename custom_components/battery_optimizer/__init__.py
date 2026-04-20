@@ -15,6 +15,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
 
     hass.data.setdefault(DOMAIN, {})
     coordinator = BatteryOptimizerCoordinator(hass, entry)
+    await coordinator.async_load_daily_totals()
     hass.data[DOMAIN][entry.entry_id] = coordinator
     await coordinator.async_config_entry_first_refresh()
     await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)
@@ -39,4 +40,3 @@ async def _async_update_listener(hass: HomeAssistant, entry: ConfigEntry) -> Non
     """Reload when options change."""
 
     await hass.config_entries.async_reload(entry.entry_id)
-

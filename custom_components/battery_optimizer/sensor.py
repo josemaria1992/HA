@@ -59,6 +59,41 @@ SENSORS: tuple[BatteryOptimizerSensorDescription, ...] = (
         attrs_fn=lambda coordinator: _cost_attrs(coordinator),
     ),
     BatteryOptimizerSensorDescription(
+        key="daily_cost_without_battery",
+        translation_key="daily_cost_without_battery",
+        native_unit_of_measurement="SEK",
+        value_fn=lambda coordinator: round(coordinator.daily_cost_without_battery, 2),
+        attrs_fn=lambda coordinator: _daily_attrs(coordinator),
+    ),
+    BatteryOptimizerSensorDescription(
+        key="daily_cost_with_battery",
+        translation_key="daily_cost_with_battery",
+        native_unit_of_measurement="SEK",
+        value_fn=lambda coordinator: round(coordinator.daily_cost_with_battery, 2),
+        attrs_fn=lambda coordinator: _daily_attrs(coordinator),
+    ),
+    BatteryOptimizerSensorDescription(
+        key="daily_savings",
+        translation_key="daily_savings",
+        native_unit_of_measurement="SEK",
+        value_fn=lambda coordinator: round(coordinator.daily_savings, 2),
+        attrs_fn=lambda coordinator: _daily_attrs(coordinator),
+    ),
+    BatteryOptimizerSensorDescription(
+        key="daily_energy_without_battery",
+        translation_key="daily_energy_without_battery",
+        native_unit_of_measurement="kWh",
+        value_fn=lambda coordinator: round(coordinator.daily_energy_without_battery_kwh, 3),
+        attrs_fn=lambda coordinator: _daily_attrs(coordinator),
+    ),
+    BatteryOptimizerSensorDescription(
+        key="daily_energy_with_battery",
+        translation_key="daily_energy_with_battery",
+        native_unit_of_measurement="kWh",
+        value_fn=lambda coordinator: round(coordinator.daily_energy_with_battery_kwh, 3),
+        attrs_fn=lambda coordinator: _daily_attrs(coordinator),
+    ),
+    BatteryOptimizerSensorDescription(
         key="cheapest_charge_windows",
         translation_key="cheapest_charge_windows",
         value_fn=lambda coordinator: len(coordinator.data.cheapest_charge_windows) if coordinator.data else None,
@@ -134,7 +169,7 @@ class BatteryOptimizerSensor(CoordinatorEntity[BatteryOptimizerCoordinator], Sen
 
     @property
     def available(self) -> bool:
-        if self.entity_description.key == "last_command":
+        if self.entity_description.key == "last_command" or self.entity_description.key.startswith("daily_"):
             return True
         return bool(self.coordinator.data and self.coordinator.data.valid)
 
@@ -219,4 +254,17 @@ def _cost_attrs(coordinator: BatteryOptimizerCoordinator) -> dict[str, Any]:
             }
             for interval in coordinator.data.intervals[:48]
         ],
+    }
+
+
+def _daily_attrs(coordinator: BatteryOptimizerCoordinator) -> dict[str, Any]:
+    return {
+        "date": coordinator.daily_date.isoformat(),
+        "daily_cost_without_battery": round(coordinator.daily_cost_without_battery, 4),
+        "daily_cost_with_battery": round(coordinator.daily_cost_with_battery, 4),
+        "daily_savings": round(coordinator.daily_savings, 4),
+        "daily_energy_without_battery_kwh": round(coordinator.daily_energy_without_battery_kwh, 4),
+        "daily_energy_with_battery_kwh": round(coordinator.daily_energy_with_battery_kwh, 4),
+        "currency": "SEK",
+        "method": "Baseline uses live load power. Actual uses positive grid import from the three phase power sensors. Both are multiplied by the current hourly average price.",
     }

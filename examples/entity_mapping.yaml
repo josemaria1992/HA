@@ -18,6 +18,10 @@ phase_current_entities:
   - sensor.inverter_external_ct1_current
   - sensor.inverter_external_ct2_current
   - sensor.inverter_external_ct3_current
+phase_power_entities:
+  - sensor.inverter_external_ct1_power
+  - sensor.inverter_external_ct2_power
+  - sensor.inverter_external_ct3_power
 phase_voltage_entities:
   - sensor.inverter_grid_l1_voltage
   - sensor.inverter_grid_l2_voltage

@@ -41,6 +41,7 @@ from .const import (
     CONF_PEAK_SHAVING_SWITCH,
     CONF_PHASE_CURRENT_ENTITIES,
     CONF_PHASE_PEAK_SHAVING_ENABLED,
+    CONF_PHASE_POWER_ENTITIES,
     CONF_PHASE_VOLTAGE_ENTITIES,
     CONF_PREFERRED_MAX_SOC,
     CONF_PRICE_ENTITY,
@@ -158,6 +159,7 @@ def _schema(defaults: dict[str, Any] | None = None, *, options: bool = False) ->
             vol.Optional(CONF_WORK_MODE_SELECT, default=defaults.get(CONF_WORK_MODE_SELECT, "select.inverter_work_mode")): _entity_selector("select"),
             vol.Optional(CONF_PROGRAM_SOC_NUMBERS, default=defaults.get(CONF_PROGRAM_SOC_NUMBERS, "")): str,
             vol.Optional(CONF_PHASE_CURRENT_ENTITIES, default=defaults.get(CONF_PHASE_CURRENT_ENTITIES, "sensor.inverter_external_ct1_current,sensor.inverter_external_ct2_current,sensor.inverter_external_ct3_current")): str,
+            vol.Optional(CONF_PHASE_POWER_ENTITIES, default=defaults.get(CONF_PHASE_POWER_ENTITIES, "sensor.inverter_external_ct1_power,sensor.inverter_external_ct2_power,sensor.inverter_external_ct3_power")): str,
             vol.Optional(CONF_PHASE_VOLTAGE_ENTITIES, default=defaults.get(CONF_PHASE_VOLTAGE_ENTITIES, "sensor.inverter_grid_l1_voltage,sensor.inverter_grid_l2_voltage,sensor.inverter_grid_l3_voltage")): str,
         }
     )

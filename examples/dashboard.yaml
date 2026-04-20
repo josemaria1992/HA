@@ -28,12 +28,26 @@ cards:
         name: Projected SOC
 
   - type: entities
-    title: Projected Invoice Comparison
+    title: Daily Savings So Far
+    entities:
+      - entity: sensor.battery_optimizer_daily_cost_without_battery
+        name: Today's cost without battery
+      - entity: sensor.battery_optimizer_daily_cost_with_battery
+        name: Today's cost with battery
+      - entity: sensor.battery_optimizer_daily_savings
+        name: Today's savings
+      - entity: sensor.battery_optimizer_daily_energy_without_battery
+        name: Today's energy without battery
+      - entity: sensor.battery_optimizer_daily_energy_with_battery
+        name: Today's grid energy with battery
+
+  - type: entities
+    title: Projected Coming Window
     entities:
       - entity: sensor.battery_optimizer_cost_without_battery
-        name: Cost without battery
+        name: Projected cost without battery
       - entity: sensor.battery_optimizer_cost_with_battery
-        name: Cost with battery
+        name: Projected cost with battery
       - entity: sensor.battery_optimizer_expected_value
         name: Projected savings
 

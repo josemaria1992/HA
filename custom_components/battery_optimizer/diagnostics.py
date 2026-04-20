@@ -28,6 +28,14 @@ async def async_get_config_entry_diagnostics(hass: HomeAssistant, entry: ConfigE
         "projected_cost_without_battery": data.projected_cost_without_battery if data else None,
         "projected_cost_with_battery": data.projected_cost_with_battery if data else None,
         "expected_savings": data.expected_savings if data else None,
+        "daily": {
+            "date": coordinator.daily_date.isoformat(),
+            "cost_without_battery": coordinator.daily_cost_without_battery,
+            "cost_with_battery": coordinator.daily_cost_with_battery,
+            "savings": coordinator.daily_savings,
+            "energy_without_battery_kwh": coordinator.daily_energy_without_battery_kwh,
+            "energy_with_battery_kwh": coordinator.daily_energy_with_battery_kwh,
+        },
         "reasons": data.reasons if data else [],
         "plan_preview": [
             {

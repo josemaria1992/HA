@@ -73,6 +73,7 @@ peak_shaving_number: number.inverter_grid_peak_shaving
 
 work_mode_select: select.inverter_work_mode
 phase_current_entities: sensor.inverter_external_ct1_current,sensor.inverter_external_ct2_current,sensor.inverter_external_ct3_current
+phase_power_entities: sensor.inverter_external_ct1_power,sensor.inverter_external_ct2_power,sensor.inverter_external_ct3_power
 phase_voltage_entities: sensor.inverter_grid_l1_voltage,sensor.inverter_grid_l2_voltage,sensor.inverter_grid_l3_voltage
 ```
 
@@ -85,6 +86,7 @@ Before real control is enabled, confirm these values in the config flow:
 - `sensor.inverter_battery_capacity` reports total usable capacity in kWh.
 - `sensor.inverter_battery_voltage` reports battery voltage in volts.
 - `number.inverter_battery_max_charging_current` and `number.inverter_battery_max_discharging_current` are the actual safety current limits in amps.
+- `sensor.inverter_external_ct1_power`, `ct2`, and `ct3` represent live grid import/export per phase. Daily savings uses positive import from these sensors.
 - The inverter peak shaving number still expects total watts, but Battery Optimizer watches individual phase currents and dynamically lowers that total-watt threshold when any phase reaches the per-phase limit.
 
 ## Entities
@@ -96,6 +98,11 @@ Created entities include:
 - `sensor.battery_optimizer_expected_value`
 - `sensor.battery_optimizer_cost_without_battery`
 - `sensor.battery_optimizer_cost_with_battery`
+- `sensor.battery_optimizer_daily_cost_without_battery`
+- `sensor.battery_optimizer_daily_cost_with_battery`
+- `sensor.battery_optimizer_daily_savings`
+- `sensor.battery_optimizer_daily_energy_without_battery`
+- `sensor.battery_optimizer_daily_energy_with_battery`
 - `sensor.battery_optimizer_upcoming_charge_hours`
 - `sensor.battery_optimizer_upcoming_discharge_hours`
 - `sensor.battery_optimizer_cheapest_charge_windows`
@@ -162,12 +169,26 @@ cards:
         name: Projected SOC
 
   - type: entities
-    title: Projected Invoice Comparison
+    title: Daily Savings So Far
+    entities:
+      - entity: sensor.battery_optimizer_daily_cost_without_battery
+        name: Today's cost without battery
+      - entity: sensor.battery_optimizer_daily_cost_with_battery
+        name: Today's cost with battery
+      - entity: sensor.battery_optimizer_daily_savings
+        name: Today's savings
+      - entity: sensor.battery_optimizer_daily_energy_without_battery
+        name: Today's energy without battery
+      - entity: sensor.battery_optimizer_daily_energy_with_battery
+        name: Today's grid energy with battery
+
+  - type: entities
+    title: Projected Coming Window
     entities:
       - entity: sensor.battery_optimizer_cost_without_battery
-        name: Cost without battery
+        name: Projected cost without battery
       - entity: sensor.battery_optimizer_cost_with_battery
-        name: Cost with battery
+        name: Projected cost with battery
       - entity: sensor.battery_optimizer_expected_value
         name: Projected savings
 
