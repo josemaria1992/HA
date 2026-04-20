@@ -63,6 +63,8 @@
       "expected_savings": { "name": "Expected value" },
       "cheapest_charge_windows": { "name": "Cheapest charge windows" },
       "best_discharge_windows": { "name": "Best discharge windows" },
+      "upcoming_charge_hours": { "name": "Upcoming charge hours" },
+      "upcoming_discharge_hours": { "name": "Upcoming discharge hours" },
       "decision_reasons": { "name": "Decision reasons" },
       "last_command": { "name": "Last command" }
     },

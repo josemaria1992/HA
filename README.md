@@ -94,6 +94,8 @@ Created entities include:
 - `sensor.battery_optimizer_planned_mode`
 - `sensor.battery_optimizer_projected_soc`
 - `sensor.battery_optimizer_expected_value`
+- `sensor.battery_optimizer_upcoming_charge_hours`
+- `sensor.battery_optimizer_upcoming_discharge_hours`
 - `sensor.battery_optimizer_cheapest_charge_windows`
 - `sensor.battery_optimizer_best_discharge_windows`
 - `sensor.battery_optimizer_decision_reasons`
@@ -136,6 +138,8 @@ cards:
       - entity: sensor.battery_optimizer_planned_mode
       - entity: sensor.battery_optimizer_projected_soc
       - entity: sensor.battery_optimizer_expected_value
+      - entity: sensor.battery_optimizer_upcoming_charge_hours
+      - entity: sensor.battery_optimizer_upcoming_discharge_hours
       - entity: sensor.battery_optimizer_decision_reasons
       - entity: select.battery_optimizer_override_mode
       - entity: switch.battery_optimizer_advisory_only_mode

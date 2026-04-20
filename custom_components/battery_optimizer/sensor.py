@@ -14,6 +14,7 @@ from homeassistant.helpers.update_coordinator import CoordinatorEntity
 
 from .const import ATTR_PLAN, ATTR_REASONS, ATTR_WINDOWS, DOMAIN
 from .coordinator import BatteryOptimizerCoordinator, get_coordinator
+from .optimizer import BatteryMode
 
 
 @dataclass(frozen=True, kw_only=True)
@@ -54,6 +55,18 @@ SENSORS: tuple[BatteryOptimizerSensorDescription, ...] = (
         translation_key="best_discharge_windows",
         value_fn=lambda coordinator: len(coordinator.data.best_discharge_windows) if coordinator.data else None,
         attrs_fn=lambda coordinator: {ATTR_WINDOWS: [item.isoformat() for item in coordinator.data.best_discharge_windows]} if coordinator.data else {},
+    ),
+    BatteryOptimizerSensorDescription(
+        key="upcoming_charge_hours",
+        translation_key="upcoming_charge_hours",
+        value_fn=lambda coordinator: _mode_summary(coordinator, BatteryMode.CHARGE),
+        attrs_fn=lambda coordinator: _mode_schedule_attrs(coordinator, BatteryMode.CHARGE),
+    ),
+    BatteryOptimizerSensorDescription(
+        key="upcoming_discharge_hours",
+        translation_key="upcoming_discharge_hours",
+        value_fn=lambda coordinator: _mode_summary(coordinator, BatteryMode.DISCHARGE),
+        attrs_fn=lambda coordinator: _mode_schedule_attrs(coordinator, BatteryMode.DISCHARGE),
     ),
     BatteryOptimizerSensorDescription(
         key="decision_reasons",
@@ -127,5 +140,35 @@ def _plan_attrs(coordinator: BatteryOptimizerCoordinator) -> dict[str, Any]:
                 "reason": interval.reason,
             }
             for interval in coordinator.data.intervals[:48]
+        ],
+    }
+
+
+def _mode_summary(coordinator: BatteryOptimizerCoordinator, mode: BatteryMode) -> str | None:
+    if not coordinator.data:
+        return None
+    intervals = [interval for interval in coordinator.data.intervals if interval.mode is mode]
+    if not intervals:
+        return "None planned"
+    first = intervals[0]
+    return f"{len(intervals)} intervals, next {first.start.strftime('%H:%M')}"
+
+
+def _mode_schedule_attrs(coordinator: BatteryOptimizerCoordinator, mode: BatteryMode) -> dict[str, Any]:
+    if not coordinator.data:
+        return {}
+    intervals = [interval for interval in coordinator.data.intervals if interval.mode is mode]
+    return {
+        "count": len(intervals),
+        "hours": [
+            {
+                "start": interval.start.isoformat(),
+                "time": interval.start.strftime("%Y-%m-%d %H:%M"),
+                "target_power_kw": interval.target_power_kw,
+                "projected_soc_percent": interval.projected_soc_percent,
+                "price": interval.price,
+                "reason": interval.reason,
+            }
+            for interval in intervals[:48]
         ],
     }
