@@ -97,3 +97,17 @@ def build_hourly_average_lookup(
             lookup[hour_start] = average
         hour_start = hour_end
     return lookup
+
+
+def effective_tracking_start(
+    period_start: datetime,
+    now: datetime,
+    reset_at: datetime | None,
+) -> datetime:
+    """Clamp historical accumulation to a manual reset point when present."""
+
+    if reset_at is None:
+        return period_start
+    if reset_at >= now:
+        return now
+    return max(period_start, reset_at)

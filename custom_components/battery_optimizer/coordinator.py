@@ -31,6 +31,7 @@ from .costs import (
     ElectricityCostComparison,
     build_hourly_average_lookup,
     compare_electricity_costs,
+    effective_tracking_start,
 )
 from .const import (
     CONF_ADVISORY_ONLY,
@@ -86,6 +87,7 @@ class BatteryOptimizerCoordinator(DataUpdateCoordinator[OptimizationResult | Non
         self.monthly_energy_without_battery_kwh = 0.0
         self.monthly_energy_with_battery_kwh = 0.0
         self.month_key = _month_key(dt_util.now().date())
+        self.cost_tracking_reset_at: datetime | None = None
         self.cost_tracking_status = "Waiting for first runtime sample."
         self.load_forecast: list[ForecastPoint] = []
         self._last_daily_sample: datetime | None = None
@@ -146,6 +148,7 @@ class BatteryOptimizerCoordinator(DataUpdateCoordinator[OptimizationResult | Non
             charge_response_factor=float(stored.get("adaptive_charge_response_factor", 1.0)),
             discharge_response_factor=float(stored.get("adaptive_discharge_response_factor", 1.0)),
         )
+        self.cost_tracking_reset_at = _parse_datetime(stored.get("cost_tracking_reset_at"))
         await self._async_backfill_cost_totals()
 
     async def _async_update_data(self) -> OptimizationResult | None:
@@ -356,6 +359,7 @@ class BatteryOptimizerCoordinator(DataUpdateCoordinator[OptimizationResult | Non
         self.monthly_savings = 0.0
         self.monthly_energy_without_battery_kwh = 0.0
         self.monthly_energy_with_battery_kwh = 0.0
+        self.cost_tracking_reset_at = now
         self._last_daily_sample = now
         self.cost_tracking_status = (
             f"Cost tracking was reset to 0 at {now.strftime('%Y-%m-%d %H:%M:%S')} and will accumulate from the next sample."
@@ -503,6 +507,7 @@ class BatteryOptimizerCoordinator(DataUpdateCoordinator[OptimizationResult | Non
                 "monthly_savings": round(self.monthly_savings, 4),
                 "monthly_energy_without_battery_kwh": round(self.monthly_energy_without_battery_kwh, 4),
                 "monthly_energy_with_battery_kwh": round(self.monthly_energy_with_battery_kwh, 4),
+                "cost_tracking_reset_at": self.cost_tracking_reset_at.isoformat() if self.cost_tracking_reset_at else None,
                 "adaptive_load_bias_kw": round(self.adaptive_state.load_bias_kw, 4),
                 "adaptive_charge_response_factor": round(self.adaptive_state.charge_response_factor, 4),
                 "adaptive_discharge_response_factor": round(self.adaptive_state.discharge_response_factor, 4),
@@ -515,13 +520,15 @@ class BatteryOptimizerCoordinator(DataUpdateCoordinator[OptimizationResult | Non
         now = dt_util.now()
         month_start = now.replace(day=1, hour=0, minute=0, second=0, microsecond=0)
         today_start = now.replace(hour=0, minute=0, second=0, microsecond=0)
+        month_tracking_start = effective_tracking_start(month_start, now, self.cost_tracking_reset_at)
+        today_tracking_start = effective_tracking_start(today_start, now, self.cost_tracking_reset_at)
         estimates = await self.hass.async_add_executor_job(
             _estimate_costs_from_history,
             self.hass,
             self.config,
-            month_start,
+            month_tracking_start,
             now,
-            today_start,
+            today_tracking_start,
         )
         if not estimates:
             if self.monthly_cost_with_battery == 0 and self.monthly_energy_with_battery_kwh == 0:
@@ -539,7 +546,12 @@ class BatteryOptimizerCoordinator(DataUpdateCoordinator[OptimizationResult | Non
         self.daily_savings = today["cost_without_battery"] - today["cost_with_battery"]
         self.daily_energy_without_battery_kwh = today["energy_without_battery_kwh"]
         self.daily_energy_with_battery_kwh = today["energy_with_battery_kwh"]
-        self.cost_tracking_status = "Month and day totals were backfilled from recorder history."
+        if self.cost_tracking_reset_at is not None:
+            self.cost_tracking_status = (
+                "Month and day totals were backfilled from recorder history starting at the last manual reset."
+            )
+        else:
+            self.cost_tracking_status = "Month and day totals were backfilled from recorder history."
         await self._async_store_daily_totals()
         return True
 
@@ -738,6 +750,15 @@ def _parse_date(value: Any) -> date | None:
         return date.fromisoformat(value)
     except ValueError:
         return None
+
+
+def _parse_datetime(value: Any) -> datetime | None:
+    if not isinstance(value, str):
+        return None
+    parsed = dt_util.parse_datetime(value)
+    if parsed is None:
+        return None
+    return dt_util.as_local(parsed)
 
 
 def _month_key(value: date) -> str:

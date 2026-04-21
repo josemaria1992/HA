@@ -28,6 +28,7 @@ battery_optimizer_pkg.__path__ = [str(BASE)]
 costs = _load_module("custom_components.battery_optimizer.costs", BASE / "costs.py")
 build_hourly_average_lookup = costs.build_hourly_average_lookup
 compare_electricity_costs = costs.compare_electricity_costs
+effective_tracking_start = costs.effective_tracking_start
 
 
 def test_compare_electricity_costs_returns_bill_savings_only() -> None:
@@ -67,3 +68,19 @@ def test_build_hourly_average_lookup_preserves_hourly_prices() -> None:
         start: 1.8,
         start + timedelta(hours=1): 2.4,
     }
+
+
+def test_effective_tracking_start_respects_manual_reset() -> None:
+    period_start = datetime(2026, 4, 1, 0, 0)
+    now = datetime(2026, 4, 21, 12, 0)
+    reset_at = datetime(2026, 4, 21, 11, 30)
+
+    assert effective_tracking_start(period_start, now, reset_at) == reset_at
+
+
+def test_effective_tracking_start_ignores_old_or_missing_reset() -> None:
+    period_start = datetime(2026, 4, 1, 0, 0)
+    now = datetime(2026, 4, 21, 12, 0)
+
+    assert effective_tracking_start(period_start, now, None) == period_start
+    assert effective_tracking_start(period_start, now, datetime(2026, 3, 25, 9, 0)) == period_start
