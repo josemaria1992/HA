@@ -76,6 +76,16 @@ def test_optimizer_discharges_when_prices_are_high() -> None:
     assert result.best_discharge_windows
 
 
+def test_optimizer_prefers_using_battery_before_negative_price_recharge() -> None:
+    result = optimize(_input([1.20, 1.10, -0.40, -0.35, 1.30, 1.25], soc=80))
+
+    assert result.valid
+    assert result.intervals[0].mode is BatteryMode.DISCHARGE
+    assert result.intervals[0].target_power_kw > 0
+    assert any(interval.mode is BatteryMode.CHARGE for interval in result.intervals[2:4])
+    assert any("Negative Nord Pool charging windows detected" in reason for reason in result.reasons)
+
+
 def test_optimizer_holds_when_spread_is_too_small() -> None:
     result = optimize(_input([0.20, 0.21, 0.22, 0.23], soc=60))
 

@@ -176,7 +176,8 @@ def optimize(input_data: OptimizationInput) -> OptimizationResult:
     all_in_by_start = {point.start: point.price + constraints.grid_fee_per_kwh for point in prices}
     charge_windows = {point.start for point in prices if all_in_by_start[point.start] <= low_threshold}
     discharge_windows = {point.start for point in prices if all_in_by_start[point.start] >= high_threshold}
-    future_value = _future_stored_energy_values(total_prices, constraints)
+    if any(point.price < 0 for point in prices):
+        reasons.append("Negative Nord Pool charging windows detected; stored energy is less valuable before those windows.")
     return _optimize_dp(
         input_data,
         prices,
@@ -184,7 +185,6 @@ def optimize(input_data: OptimizationInput) -> OptimizationResult:
         reasons,
         charge_windows,
         discharge_windows,
-        future_value,
     )
 
 
@@ -194,18 +194,6 @@ def _percentile(values: list[float], percentile: float) -> float:
         return 0.0
     idx = min(max(round((len(ordered) - 1) * percentile), 0), len(ordered) - 1)
     return ordered[idx]
-
-
-def _future_stored_energy_values(prices: list[float], constraints: BatteryConstraints) -> list[float]:
-    """Return the best future value of one stored battery kWh from each interval."""
-
-    values = [0.0] * (len(prices) + 1)
-    best = 0.0
-    for index in range(len(prices) - 1, -1, -1):
-        discharge_value = prices[index] * constraints.discharge_efficiency - constraints.degradation_cost_per_kwh
-        best = max(best, discharge_value)
-        values[index] = best
-    return values
 
 
 def _select_charge_ceiling_soc(all_in_prices: list[float], constraints: BatteryConstraints) -> tuple[float, str]:
@@ -243,7 +231,6 @@ def _optimize_dp(
     reasons: list[str],
     charge_windows: set[datetime],
     discharge_windows: set[datetime],
-    future_value: list[float],
 ) -> OptimizationResult:
     """Optimize the horizon with dependency-free dynamic programming."""
 
@@ -286,8 +273,6 @@ def _optimize_dp(
                     interval_hours,
                     load_kwh,
                     all_in_price,
-                    point.start,
-                    future_value[index + 1] if index + 1 < len(future_value) else 0,
                 )
             for candidate in candidates:
                 next_soc = _quantize(float(candidate["next_soc_kwh"]), step, reserve_kwh, max_kwh)
@@ -389,8 +374,6 @@ def _dp_actions(
     interval_hours: float,
     load_kwh: float,
     all_in_price: float,
-    start: datetime,
-    future_stored_value: float,
 ) -> list[dict[str, float | BatteryMode | str]]:
     cycle_penalty = _cycle_penalty(constraints)
     actions: list[dict[str, float | BatteryMode | str]] = [
@@ -431,7 +414,6 @@ def _dp_actions(
                     grid_kwh * all_in_price
                     + battery_discharge * constraints.degradation_cost_per_kwh
                     + battery_discharge * cycle_penalty
-                    + max(future_stored_value - (all_in_price * constraints.discharge_efficiency), 0) * battery_discharge
                 ),
                 "reason": f"Discharging because DP found this lowers all-in grid cost for forecast load; all-in price {all_in_price:.3f}.",
             }
