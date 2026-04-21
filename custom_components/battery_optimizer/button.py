@@ -14,7 +14,7 @@ from .coordinator import BatteryOptimizerCoordinator, get_coordinator
 
 async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry, async_add_entities: AddEntitiesCallback) -> None:
     coordinator = get_coordinator(hass, entry)
-    async_add_entities([BatteryOptimizerApplyButton(coordinator, entry)])
+    async_add_entities([BatteryOptimizerApplyButton(coordinator, entry), BatteryOptimizerResetCostTrackingButton(coordinator, entry)])
 
 
 class BatteryOptimizerApplyButton(CoordinatorEntity[BatteryOptimizerCoordinator], ButtonEntity):
@@ -35,3 +35,21 @@ class BatteryOptimizerApplyButton(CoordinatorEntity[BatteryOptimizerCoordinator]
     async def async_press(self) -> None:
         await self.coordinator.async_apply_current_plan()
 
+
+class BatteryOptimizerResetCostTrackingButton(CoordinatorEntity[BatteryOptimizerCoordinator], ButtonEntity):
+    """Reset cost tracking accumulators to zero from now."""
+
+    _attr_has_entity_name = True
+    _attr_translation_key = "reset_cost_tracking"
+
+    def __init__(self, coordinator: BatteryOptimizerCoordinator, entry: ConfigEntry) -> None:
+        super().__init__(coordinator)
+        self._attr_unique_id = f"{entry.entry_id}_reset_cost_tracking"
+        self._attr_device_info = {
+            "identifiers": {(DOMAIN, entry.entry_id)},
+            "name": entry.title,
+            "manufacturer": "Battery Optimizer",
+        }
+
+    async def async_press(self) -> None:
+        await self.coordinator.async_reset_cost_tracking()

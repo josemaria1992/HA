@@ -157,6 +157,12 @@ Apply the current plan manually:
 service: battery_optimizer.apply_now
 ```
 
+Reset daily and monthly cost tracking to `0` from now:
+
+```yaml
+service: battery_optimizer.reset_cost_tracking
+```
+
 ## Example Dashboard
 
 ```yaml
@@ -535,6 +541,7 @@ cards:
       - entity: select.battery_optimizer_override_mode
       - entity: switch.battery_optimizer_advisory_only_mode
       - entity: button.battery_optimizer_apply_current_plan
+      - entity: button.battery_optimizer_reset_cost_tracking
 
   - type: entities
     title: Optimizer Controls
@@ -547,6 +554,8 @@ cards:
         name: Advisory-only mode
       - entity: button.battery_optimizer_apply_current_plan
         name: Apply current plan
+      - entity: button.battery_optimizer_reset_cost_tracking
+        name: Reset cost tracking
 
   - type: entities
     title: Windows

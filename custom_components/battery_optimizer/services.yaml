@@ -16,3 +16,6 @@ set_override:
 apply_now:
   name: Apply now
   description: Apply the current optimized interval to the configured backend.
+reset_cost_tracking:
+  name: Reset cost tracking
+  description: Reset daily and monthly cost tracking totals to 0 from now.

@@ -101,7 +101,8 @@
       "advisory_only": { "name": "Advisory-only mode" }
     },
     "button": {
-      "apply_now": { "name": "Apply current plan" }
+      "apply_now": { "name": "Apply current plan" },
+      "reset_cost_tracking": { "name": "Reset cost tracking" }
     }
   }
 }

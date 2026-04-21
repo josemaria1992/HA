@@ -334,6 +334,29 @@ class BatteryOptimizerCoordinator(DataUpdateCoordinator[OptimizationResult | Non
         self.override_mode = mode
         await self.async_request_refresh()
 
+    async def async_reset_cost_tracking(self) -> None:
+        """Reset daily and monthly cost accumulators to zero from now."""
+
+        now = dt_util.now()
+        self.daily_date = now.date()
+        self.month_key = _month_key(now.date())
+        self.daily_cost_without_battery = 0.0
+        self.daily_cost_with_battery = 0.0
+        self.daily_savings = 0.0
+        self.daily_energy_without_battery_kwh = 0.0
+        self.daily_energy_with_battery_kwh = 0.0
+        self.monthly_cost_without_battery = 0.0
+        self.monthly_cost_with_battery = 0.0
+        self.monthly_savings = 0.0
+        self.monthly_energy_without_battery_kwh = 0.0
+        self.monthly_energy_with_battery_kwh = 0.0
+        self._last_daily_sample = now
+        self.cost_tracking_status = (
+            f"Cost tracking was reset to 0 at {now.strftime('%Y-%m-%d %H:%M:%S')} and will accumulate from the next sample."
+        )
+        await self._async_store_daily_totals()
+        self.async_update_listeners()
+
     def _apply_override(self, result: OptimizationResult) -> OptimizationResult:
         if not result.valid or self.override_mode == OVERRIDE_AUTO:
             return result

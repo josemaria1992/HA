@@ -99,3 +99,4 @@ ATTR_PHASE_PEAK_SHAVING = "phase_peak_shaving"
 
 SERVICE_SET_OVERRIDE = "set_override"
 SERVICE_APPLY_NOW = "apply_now"
+SERVICE_RESET_COST_TRACKING = "reset_cost_tracking"
