@@ -455,6 +455,45 @@ cards:
       - entity: sensor.inverter_load_power
         name: Current load
 
+  - type: custom:apexcharts-card
+    header:
+      show: true
+      title: Today - Load Forecast vs Actual
+    graph_span: 1d
+    span:
+      start: day
+    now:
+      show: true
+      label: Now
+    yaxis:
+      - min: 0
+        decimals: 2
+    apex_config:
+      stroke:
+        width: 2
+      legend:
+        show: true
+    series:
+      - entity: sensor.inverter_load_power
+        name: Actual load
+        type: line
+        curve: smooth
+        transform: |
+          return x > 50 ? x / 1000 : x;
+      - entity: sensor.battery_optimizer_load_forecast
+        name: Forecast load
+        type: line
+        curve: stepline
+        data_generator: |
+          const points = entity?.attributes?.forecast || [];
+          const startOfToday = new Date();
+          startOfToday.setHours(0, 0, 0, 0);
+          return points
+            .filter((point) => new Date(point.time) >= startOfToday)
+            .map((point) => {
+              return [new Date(point.time).getTime(), point.load_kw];
+            });
+
   - type: entities
     title: Projected Coming Window
     entities:
@@ -516,7 +555,14 @@ The optimizer uses dependency-free dynamic programming rather than a heavy MILP 
 12. Applies hysteresis and minimum dwell intervals to reduce charge/discharge oscillation.
 13. Explains the current decision in plain attributes.
 
-Load forecasting uses recorder history by default. It groups `sensor.inverter_load_power` by day-of-week and interval, trims outliers, and falls back to weekday-hour history or current load when there are not enough samples. A dedicated `load_forecast_entity` can still be configured for external forecasts.
+Load forecasting uses recorder history by default. It now:
+
+1. learns exact weekday-and-interval patterns
+2. learns separate workday vs weekend/holiday profiles
+3. blends those historical patterns with a rolling recent trend
+4. falls back to current load when history is too thin
+
+The `sensor.battery_optimizer_load_forecast` attributes show the forecast source, sample count, workday/weekend-holiday profile, raw pattern value, recent-trend value, current-load fallback, and adaptive bias for each point. A dedicated `load_forecast_entity` can still be configured for external forecasts.
 
 This is deliberately conservative. A future linear programming backend can be added behind the same `optimize()` input/output model.
 

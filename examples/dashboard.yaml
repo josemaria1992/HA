@@ -294,6 +294,45 @@ cards:
       - entity: sensor.inverter_load_power
         name: Current load
 
+  - type: custom:apexcharts-card
+    header:
+      show: true
+      title: Today - Load Forecast vs Actual
+    graph_span: 1d
+    span:
+      start: day
+    now:
+      show: true
+      label: Now
+    yaxis:
+      - min: 0
+        decimals: 2
+    apex_config:
+      stroke:
+        width: 2
+      legend:
+        show: true
+    series:
+      - entity: sensor.inverter_load_power
+        name: Actual load
+        type: line
+        curve: smooth
+        transform: |
+          return x > 50 ? x / 1000 : x;
+      - entity: sensor.battery_optimizer_load_forecast
+        name: Forecast load
+        type: line
+        curve: stepline
+        data_generator: |
+          const points = entity?.attributes?.forecast || [];
+          const startOfToday = new Date();
+          startOfToday.setHours(0, 0, 0, 0);
+          return points
+            .filter((point) => new Date(point.time) >= startOfToday)
+            .map((point) => {
+              return [new Date(point.time).getTime(), point.load_kw];
+            });
+
   - type: entities
     title: Projected Coming Window
     entities:

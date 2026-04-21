@@ -43,7 +43,12 @@ from .const import (
     OVERRIDE_HOLD,
 )
 from .ingestion import DataIngestor
-from .load_forecast import ForecastPoint, async_build_history_load_forecast, to_load_points
+from .load_forecast import (
+    ForecastPoint,
+    apply_bias_to_forecast_points,
+    async_build_history_load_forecast,
+    to_load_points,
+)
 from .optimizer import BatteryMode, OptimizationResult, PlanInterval, optimize
 
 _LOGGER = logging.getLogger(__name__)
@@ -133,16 +138,17 @@ class BatteryOptimizerCoordinator(DataUpdateCoordinator[OptimizationResult | Non
     async def _async_update_data(self) -> OptimizationResult | None:
         seed_input, seed_status = self.ingestor.build_input(self._previous_mode, self._previous_mode_intervals)
         load_override = None
+        raw_load_forecast: list[ForecastPoint] = []
         if seed_input is not None:
             starts = [point.start for point in seed_input.prices]
-            self.load_forecast = await async_build_history_load_forecast(
+            raw_load_forecast = await async_build_history_load_forecast(
                 self.hass,
                 self.config,
                 starts,
                 seed_input.constraints.interval_minutes,
             )
-            if self.load_forecast:
-                load_override = to_load_points(self.load_forecast)
+            if raw_load_forecast:
+                load_override = to_load_points(raw_load_forecast)
 
         input_data, status = self.ingestor.build_input(
             self._previous_mode,
@@ -174,15 +180,25 @@ class BatteryOptimizerCoordinator(DataUpdateCoordinator[OptimizationResult | Non
             input_data,
             load_forecast=apply_load_bias(input_data.load_forecast, self.adaptive_state.load_bias_kw),
         )
-        self.load_forecast = [
-            ForecastPoint(
-                start=point.start,
-                load_kw=point.load_kw,
-                source="adaptive_history_bias" if abs(self.adaptive_state.load_bias_kw) >= 0.01 else "history",
-                samples=0,
-            )
-            for point in input_data.load_forecast
-        ]
+        if raw_load_forecast:
+            self.load_forecast = apply_bias_to_forecast_points(raw_load_forecast, self.adaptive_state.load_bias_kw)
+        else:
+            self.load_forecast = [
+                ForecastPoint(
+                    start=point.start,
+                    load_kw=point.load_kw,
+                    source="current_load_fallback+adaptive_bias"
+                    if abs(self.adaptive_state.load_bias_kw) >= 0.01
+                    else "current_load_fallback",
+                    samples=0,
+                    profile="workday",
+                    pattern_kw=point.load_kw,
+                    recent_trend_kw=None,
+                    current_load_kw=point.load_kw,
+                    adaptive_bias_kw=round(self.adaptive_state.load_bias_kw, 3),
+                )
+                for point in input_data.load_forecast
+            ]
         self._last_input_constraints = input_data.constraints
         result = optimize(input_data)
         result.reasons.append(

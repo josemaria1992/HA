@@ -55,6 +55,20 @@ async def async_get_config_entry_diagnostics(hass: HomeAssistant, entry: ConfigE
             }
             for interval in (data.intervals[:12] if data else [])
         ],
+        "load_forecast_preview": [
+            {
+                "start": point.start.isoformat(),
+                "load_kw": point.load_kw,
+                "source": point.source,
+                "samples": point.samples,
+                "profile": point.profile,
+                "pattern_kw": point.pattern_kw,
+                "recent_trend_kw": point.recent_trend_kw,
+                "current_load_kw": point.current_load_kw,
+                "adaptive_bias_kw": point.adaptive_bias_kw,
+            }
+            for point in coordinator.load_forecast[:12]
+        ],
         "domain": DOMAIN,
     }
 

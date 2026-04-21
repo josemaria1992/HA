@@ -461,10 +461,15 @@ def _load_forecast_attrs(coordinator: BatteryOptimizerCoordinator) -> dict[str, 
                 "load_kw": point.load_kw,
                 "source": point.source,
                 "samples": point.samples,
+                "profile": point.profile,
+                "pattern_kw": point.pattern_kw,
+                "recent_trend_kw": point.recent_trend_kw,
+                "current_load_kw": point.current_load_kw,
+                "adaptive_bias_kw": point.adaptive_bias_kw,
             }
             for point in coordinator.load_forecast[:48]
         ],
-        "method": "Recorder history grouped by day-of-week and interval, with weekday-hour and current-load fallback.",
+        "method": "Forecast prefers weekday-interval history, then workday/weekend-holiday profile history, blends with a rolling recent trend when available, and falls back to current load if history is too thin.",
     }
 
 
