@@ -124,6 +124,8 @@ class BatteryOptimizerCoordinator(DataUpdateCoordinator[OptimizationResult | Non
         if input_data is None:
             if not self.config.get(CONF_ADVISORY_ONLY, True):
                 await self._async_apply_result(None)
+            else:
+                self.last_applied_message = f"Advisory-only mode: would hold because {'; '.join(status.reasons)}"
             _LOGGER.warning("Battery optimizer falling back to hold: %s", "; ".join(status.reasons))
             return OptimizationResult(
                 generated_at=dt_util.now(),
@@ -144,6 +146,13 @@ class BatteryOptimizerCoordinator(DataUpdateCoordinator[OptimizationResult | Non
         _LOGGER.info("Battery optimizer decision: %s; reasons=%s", result.current_mode.value, result.reasons)
         if not self.config.get(CONF_ADVISORY_ONLY, True):
             await self._async_apply_result(result)
+        else:
+            self.last_applied_message = (
+                f"Advisory-only mode: planned {result.current_mode.value}, "
+                f"target {result.intervals[0].target_power_kw:.2f}kW."
+                if result.intervals
+                else "Advisory-only mode: no valid interval to apply."
+            )
         return result
 
     async def async_apply_current_plan(self) -> str:

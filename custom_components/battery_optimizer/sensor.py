@@ -255,6 +255,7 @@ class BatteryOptimizerSensor(CoordinatorEntity[BatteryOptimizerCoordinator], Sen
             or self.entity_description.key.startswith("monthly_")
             or self.entity_description.key.startswith("price_")
             or self.entity_description.key == "load_forecast"
+            or self.entity_description.key in {"projected_soc_today", "projected_soc_tomorrow", "projected_soc_schedule"}
         ):
             return True
         return bool(self.coordinator.data and self.coordinator.data.valid)

@@ -159,6 +159,9 @@ class SolarmanBackend:
         entity_id = self.config.get(CONF_GRID_CHARGING_SWITCH)
         if not entity_id:
             return
+        current_state = self.hass.states.get(entity_id)
+        if current_state is not None and ((enabled and current_state.state == "on") or (not enabled and current_state.state == "off")):
+            return
         await self.hass.services.async_call(
             "switch",
             "turn_on" if enabled else "turn_off",
@@ -169,6 +172,8 @@ class SolarmanBackend:
     async def _set_grid_charge_current(self, amps: float) -> None:
         entity_id = self.config.get(CONF_GRID_CHARGING_CURRENT_NUMBER)
         if not entity_id:
+            return
+        if _number_matches(self.hass, entity_id, amps, tolerance=0.5):
             return
         await self.hass.services.async_call(
             "number",
@@ -186,6 +191,8 @@ class SolarmanBackend:
     async def _set_program_soc_targets(self, target_soc: float) -> None:
         target_soc = min(max(round(target_soc), 0), 100)
         for entity_id in self.config.get(CONF_PROGRAM_SOC_NUMBERS) or []:
+            if _number_matches(self.hass, entity_id, target_soc, tolerance=0.5):
+                continue
             await self.hass.services.async_call(
                 "number",
                 "set_value",
@@ -196,6 +203,8 @@ class SolarmanBackend:
     async def _set_number(self, config_key: str, value: float) -> None:
         entity_id = self.config.get(config_key)
         if not entity_id:
+            return
+        if _number_matches(self.hass, entity_id, value, tolerance=0.5):
             return
         await self.hass.services.async_call(
             "number",
@@ -208,15 +217,18 @@ class SolarmanBackend:
         switch_entity = self.config.get(CONF_PEAK_SHAVING_SWITCH)
         number_entity = self.config.get(CONF_PEAK_SHAVING_NUMBER)
         if switch_entity:
-            await self.hass.services.async_call("switch", "turn_on", {ATTR_ENTITY_ID: switch_entity}, blocking=True)
+            switch_state = self.hass.states.get(switch_entity)
+            if switch_state is None or switch_state.state != "on":
+                await self.hass.services.async_call("switch", "turn_on", {ATTR_ENTITY_ID: switch_entity}, blocking=True)
         if number_entity:
             threshold_w, message = self._peak_shaving_threshold_watts()
-            await self.hass.services.async_call(
-                "number",
-                "set_value",
-                {ATTR_ENTITY_ID: number_entity, "value": threshold_w},
-                blocking=True,
-            )
+            if not _number_matches(self.hass, number_entity, threshold_w, tolerance=25):
+                await self.hass.services.async_call(
+                    "number",
+                    "set_value",
+                    {ATTR_ENTITY_ID: number_entity, "value": threshold_w},
+                    blocking=True,
+                )
             return message
         return "Peak shaving threshold entity is not configured."
 
@@ -343,3 +355,10 @@ def _read_number(hass: HomeAssistant, entity_id: str | None) -> float | None:
         return float(state.state)
     except ValueError:
         return None
+
+
+def _number_matches(hass: HomeAssistant, entity_id: str | None, target: float, tolerance: float = 0.1) -> bool:
+    current = _read_number(hass, entity_id)
+    if current is None:
+        return False
+    return abs(current - target) <= tolerance

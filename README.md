@@ -219,7 +219,8 @@ cards:
         type: line
         curve: stepline
         data_generator: |
-          return entity.attributes.quarter_hours.map((point) => {
+          const points = entity?.attributes?.quarter_hours || [];
+          return points.map((point) => {
             return [new Date(point.time).getTime(), point.price];
           });
       - entity: sensor.battery_optimizer_price_today_comparison
@@ -228,7 +229,8 @@ cards:
         type: line
         curve: stepline
         data_generator: |
-          return entity.attributes.hourly_average.map((point) => {
+          const points = entity?.attributes?.hourly_average || [];
+          return points.map((point) => {
             return [new Date(point.time).getTime(), point.price];
           });
       - entity: sensor.battery_optimizer_price_today_comparison
@@ -237,7 +239,8 @@ cards:
         type: line
         curve: stepline
         data_generator: |
-          return entity.attributes.projected_soc.map((point) => {
+          const points = entity?.attributes?.projected_soc || [];
+          return points.map((point) => {
             return [new Date(point.time).getTime(), point.projected_soc_percent];
           });
 
@@ -271,7 +274,8 @@ cards:
         type: line
         curve: stepline
         data_generator: |
-          return entity.attributes.quarter_hours.map((point) => {
+          const points = entity?.attributes?.quarter_hours || [];
+          return points.map((point) => {
             return [new Date(point.time).getTime(), point.price];
           });
       - entity: sensor.battery_optimizer_price_tomorrow_comparison
@@ -280,7 +284,8 @@ cards:
         type: line
         curve: stepline
         data_generator: |
-          return entity.attributes.hourly_average.map((point) => {
+          const points = entity?.attributes?.hourly_average || [];
+          return points.map((point) => {
             return [new Date(point.time).getTime(), point.price];
           });
       - entity: sensor.battery_optimizer_price_tomorrow_comparison
@@ -289,7 +294,8 @@ cards:
         type: line
         curve: stepline
         data_generator: |
-          return entity.attributes.projected_soc.map((point) => {
+          const points = entity?.attributes?.projected_soc || [];
+          return points.map((point) => {
             return [new Date(point.time).getTime(), point.projected_soc_percent];
           });
 
