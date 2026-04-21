@@ -90,6 +90,7 @@ class BatteryOptimizerCoordinator(DataUpdateCoordinator[OptimizationResult | Non
         self.last_command_sync_issues: list[str] = []
         self._applied_snapshot: CommandSnapshot | None = None
         self._applied_plan: PlanInterval | None = None
+        self._invalid_fallback_active = False
         self.ingestor = DataIngestor(hass, self.config)
         self.backend = SolarmanBackend(hass, self.config)
         super().__init__(
@@ -200,6 +201,7 @@ class BatteryOptimizerCoordinator(DataUpdateCoordinator[OptimizationResult | Non
             command_targets = self._build_command_targets(result)
             self.planned_command_target_soc = command_targets.target_soc_percent if command_targets else None
             self.planned_command_target_power_kw = command_targets.target_power_kw if command_targets else None
+            self._invalid_fallback_active = False
             self.last_command_in_sync = None
             self.last_command_sync_issues = []
             self.last_applied_message = (
@@ -220,14 +222,13 @@ class BatteryOptimizerCoordinator(DataUpdateCoordinator[OptimizationResult | Non
         """Apply an optimization result without forcing another refresh."""
 
         if not result or not result.valid or not result.intervals:
-            self.planned_command_target_soc = None
-            self.planned_command_target_power_kw = 0.0
             self.last_command_target_soc = None
             self.last_command_target_power_kw = 0.0
             self.last_command_in_sync = None
             self.last_command_sync_issues = []
             self._applied_snapshot = None
             self._applied_plan = None
+            self._invalid_fallback_active = True
             if (
                 self._last_device_write is not None
                 and dt_util.now() - self._last_device_write < timedelta(minutes=DEFAULT_COMMAND_WRITE_INTERVAL_MINUTES)
@@ -297,6 +298,7 @@ class BatteryOptimizerCoordinator(DataUpdateCoordinator[OptimizationResult | Non
                     target_power_kw,
                 )
             self._last_reconcile_attempt = None
+            self._invalid_fallback_active = False
             self.last_command_in_sync = True
             self.last_command_sync_issues = []
         self.last_applied_message = command.message
@@ -468,6 +470,9 @@ class BatteryOptimizerCoordinator(DataUpdateCoordinator[OptimizationResult | Non
 
         if self._last_full_device_write is None:
             return "full", "Initial inverter write."
+
+        if self._invalid_fallback_active:
+            return "full", "Data recovered after fallback hold; applying planned command immediately."
 
         if signature == self._last_write_signature:
             return "skip", "Plan unchanged; preserving inverter settings to reduce writes."
