@@ -192,6 +192,40 @@ cards:
       - entity: sensor.battery_optimizer_projected_soc
         name: Projected SOC
 
+  - type: custom:apexcharts-card
+    header:
+      show: true
+      title: Today - Battery SOC
+    graph_span: 1d
+    span:
+      start: day
+    now:
+      show: true
+      label: Now
+    yaxis:
+      - min: 0
+        max: 100
+        decimals: 0
+    apex_config:
+      stroke:
+        width: 2
+      legend:
+        show: true
+    series:
+      - entity: sensor.inverter_battery
+        name: Actual SOC
+        type: line
+        curve: smooth
+      - entity: sensor.battery_optimizer_projected_soc_today
+        name: Projected SOC
+        type: line
+        curve: stepline
+        data_generator: |
+          const points = entity?.attributes?.projected_soc || [];
+          return points.map((point) => {
+            return [new Date(point.time).getTime(), point.projected_soc_percent];
+          });
+
   # Requires ApexCharts Card from HACS.
   # This plots future Nord Pool attributes, which the built-in history graph cannot do.
   - type: custom:apexcharts-card
