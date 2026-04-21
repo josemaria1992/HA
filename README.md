@@ -498,6 +498,7 @@ cards:
     series:
       - entity: sensor.battery_optimizer_current_load_kw
         name: Actual load (30 min avg)
+        unit: kW
         type: line
         curve: smooth
         group_by:
