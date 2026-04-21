@@ -121,7 +121,7 @@ Created entities include:
 - `sensor.battery_optimizer_price_today_comparison`
 - `sensor.battery_optimizer_price_tomorrow_comparison`
 - `sensor.battery_optimizer_load_forecast`
-- `sensor.battery_optimizer_current_load_kw`
+- `sensor.battery_optimizer_current_load`
 - `sensor.battery_optimizer_load_forecast_mae`
 - `sensor.battery_optimizer_load_forecast_bias`
 - `sensor.battery_optimizer_upcoming_charge_hours`
@@ -462,7 +462,7 @@ cards:
     entities:
       - entity: sensor.battery_optimizer_load_forecast
         name: Next forecast load
-      - entity: sensor.battery_optimizer_current_load_kw
+      - entity: sensor.battery_optimizer_current_load
         name: Current load
       - entity: sensor.battery_optimizer_load_forecast_mae
         name: Forecast MAE
@@ -496,7 +496,7 @@ cards:
       legend:
         show: true
     series:
-      - entity: sensor.battery_optimizer_current_load_kw
+      - entity: sensor.battery_optimizer_current_load
         name: Actual load (30 min avg)
         unit: kW
         type: line

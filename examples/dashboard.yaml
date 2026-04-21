@@ -291,7 +291,7 @@ cards:
     entities:
       - entity: sensor.battery_optimizer_load_forecast
         name: Next forecast load
-      - entity: sensor.battery_optimizer_current_load_kw
+      - entity: sensor.battery_optimizer_current_load
         name: Current load
       - entity: sensor.battery_optimizer_load_forecast_mae
         name: Forecast MAE
@@ -325,7 +325,7 @@ cards:
       legend:
         show: true
     series:
-      - entity: sensor.battery_optimizer_current_load_kw
+      - entity: sensor.battery_optimizer_current_load
         name: Actual load (30 min avg)
         unit: kW
         type: line
