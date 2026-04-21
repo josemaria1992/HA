@@ -96,6 +96,62 @@ cards:
   - type: custom:apexcharts-card
     header:
       show: true
+      title: Tomorrow - Battery SOC and Price
+    graph_span: 1d
+    span:
+      start: day
+      offset: +1d
+    now:
+      show: true
+      label: Now
+    yaxis:
+      - id: soc
+        min: 0
+        max: 100
+        decimals: 0
+      - id: price
+        decimals: 3
+        opposite: true
+    apex_config:
+      stroke:
+        width: 2
+      legend:
+        show: true
+    series:
+      - entity: sensor.battery_optimizer_price_tomorrow_comparison
+        name: Raw Nord Pool
+        yaxis_id: price
+        type: line
+        curve: stepline
+        data_generator: |
+          const points = entity?.attributes?.quarter_hours || [];
+          return points.map((point) => {
+            return [new Date(point.time).getTime(), point.price];
+          });
+      - entity: sensor.battery_optimizer_price_tomorrow_comparison
+        name: Hourly average
+        yaxis_id: price
+        type: line
+        curve: stepline
+        data_generator: |
+          const points = entity?.attributes?.hourly_average || [];
+          return points.map((point) => {
+            return [new Date(point.time).getTime(), point.price];
+          });
+      - entity: sensor.battery_optimizer_projected_soc_tomorrow
+        name: Projected SOC
+        yaxis_id: soc
+        type: line
+        curve: stepline
+        data_generator: |
+          const points = entity?.attributes?.projected_soc || [];
+          return points.map((point) => {
+            return [new Date(point.time).getTime(), point.projected_soc_percent];
+          });
+
+  - type: custom:apexcharts-card
+    header:
+      show: true
       title: Today - Price vs Projected SOC
     graph_span: 1d
     span:
