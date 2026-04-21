@@ -327,6 +327,9 @@ def _plan_attrs(coordinator: BatteryOptimizerCoordinator) -> dict[str, Any]:
                 "grid_import_with_battery_kwh": interval.grid_import_with_battery_kwh,
                 "cost_without_battery": interval.cost_without_battery,
                 "cost_with_battery": interval.cost_with_battery,
+                "electricity_savings": interval.electricity_savings,
+                "degradation_cost": interval.degradation_cost,
+                "net_value": interval.net_value,
                 "reason": interval.reason,
             }
             for interval in coordinator.data.intervals[:48]
@@ -344,10 +347,13 @@ def _projected_soc_schedule_attrs(coordinator: BatteryOptimizerCoordinator) -> d
             "mode": interval.mode.value,
             "target_power_kw": interval.target_power_kw,
             "projected_soc_percent": interval.projected_soc_percent,
-            "price": interval.price,
-            "load_kw": interval.load_kw,
-            "reason": interval.reason,
-        }
+                "price": interval.price,
+                "load_kw": interval.load_kw,
+                "reason": interval.reason,
+                "electricity_savings": interval.electricity_savings,
+                "degradation_cost": interval.degradation_cost,
+                "net_value": interval.net_value,
+            }
         for interval in intervals
     ]
     return {
@@ -387,6 +393,9 @@ def _mode_schedule_attrs(coordinator: BatteryOptimizerCoordinator, mode: Battery
                 "grid_import_with_battery_kwh": interval.grid_import_with_battery_kwh,
                 "cost_without_battery": interval.cost_without_battery,
                 "cost_with_battery": interval.cost_with_battery,
+                "electricity_savings": interval.electricity_savings,
+                "degradation_cost": interval.degradation_cost,
+                "net_value": interval.net_value,
                 "reason": interval.reason,
             }
             for interval in intervals[:48]
@@ -401,7 +410,9 @@ def _cost_attrs(coordinator: BatteryOptimizerCoordinator) -> dict[str, Any]:
         "projected_cost_without_battery": coordinator.data.projected_cost_without_battery,
         "projected_cost_with_battery": coordinator.data.projected_cost_with_battery,
         "projected_savings": coordinator.data.expected_savings,
+        "projected_net_value": coordinator.data.expected_net_value,
         "currency": "SEK",
+        "method": "Projected savings compare electricity-only grid cost without the battery versus projected grid cost with the battery. Battery degradation is tracked separately in projected_net_value and does not change the displayed electricity savings.",
         "hours": [
             {
                 "time": interval.start.strftime("%Y-%m-%d %H:%M"),
@@ -412,6 +423,9 @@ def _cost_attrs(coordinator: BatteryOptimizerCoordinator) -> dict[str, Any]:
                 "grid_import_with_battery_kwh": interval.grid_import_with_battery_kwh,
                 "cost_without_battery": interval.cost_without_battery,
                 "cost_with_battery": interval.cost_with_battery,
+                "electricity_savings": interval.electricity_savings,
+                "degradation_cost": interval.degradation_cost,
+                "net_value": interval.net_value,
             }
             for interval in coordinator.data.intervals[:48]
         ],
@@ -428,7 +442,7 @@ def _daily_attrs(coordinator: BatteryOptimizerCoordinator) -> dict[str, Any]:
         "daily_energy_with_battery_kwh": round(coordinator.daily_energy_with_battery_kwh, 4),
         "tracking_status": coordinator.cost_tracking_status,
         "currency": "SEK",
-        "method": "Baseline prefers the live load sensor and falls back to the optimizer load estimate. Actual cost prefers positive grid import from the three phase power sensors and falls back to the optimizer grid-import estimate. Both use the optimizer all-in hourly price.",
+        "method": "Electricity-only daily comparison. Baseline prefers the live load sensor and falls back to the optimizer load estimate. Actual cost prefers positive grid import from the three phase power sensors and falls back to the optimizer grid-import estimate. Both use the optimizer all-in hourly price. Battery wear is not included in daily savings.",
     }
 
 
@@ -442,7 +456,7 @@ def _monthly_attrs(coordinator: BatteryOptimizerCoordinator) -> dict[str, Any]:
         "monthly_energy_with_battery_kwh": round(coordinator.monthly_energy_with_battery_kwh, 4),
         "tracking_status": coordinator.cost_tracking_status,
         "currency": "SEK",
-        "method": "Month-to-date accumulator. Baseline prefers the live load sensor and falls back to the optimizer load estimate. Actual cost prefers positive grid import from the three phase power sensors and falls back to the optimizer grid-import estimate. Both use the optimizer all-in price including configured taxes and fees.",
+        "method": "Electricity-only month-to-date accumulator. Baseline prefers the live load sensor and falls back to the optimizer load estimate. Actual cost prefers positive grid import from the three phase power sensors and falls back to the optimizer grid-import estimate. Both use the optimizer all-in price including configured taxes and fees. Battery wear is not included in monthly savings.",
     }
 
 

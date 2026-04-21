@@ -28,6 +28,7 @@ async def async_get_config_entry_diagnostics(hass: HomeAssistant, entry: ConfigE
         "projected_cost_without_battery": data.projected_cost_without_battery if data else None,
         "projected_cost_with_battery": data.projected_cost_with_battery if data else None,
         "expected_savings": data.expected_savings if data else None,
+        "expected_net_value": data.expected_net_value if data else None,
         "daily": {
             "date": coordinator.daily_date.isoformat(),
             "cost_without_battery": coordinator.daily_cost_without_battery,
@@ -51,6 +52,9 @@ async def async_get_config_entry_diagnostics(hass: HomeAssistant, entry: ConfigE
                 "mode": interval.mode.value,
                 "target_power_kw": interval.target_power_kw,
                 "projected_soc_percent": interval.projected_soc_percent,
+                "electricity_savings": interval.electricity_savings,
+                "degradation_cost": interval.degradation_cost,
+                "net_value": interval.net_value,
                 "reason": interval.reason,
             }
             for interval in (data.intervals[:12] if data else [])

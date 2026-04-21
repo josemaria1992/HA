@@ -68,7 +68,7 @@
       "projected_soc_schedule": { "name": "Projected SOC schedule" },
       "projected_soc_today": { "name": "Projected SOC today" },
       "projected_soc_tomorrow": { "name": "Projected SOC tomorrow" },
-      "expected_savings": { "name": "Expected value" },
+      "expected_savings": { "name": "Projected savings" },
       "cost_without_battery": { "name": "Cost without battery" },
       "cost_with_battery": { "name": "Cost with battery" },
       "daily_cost_without_battery": { "name": "Daily cost without battery" },

@@ -77,7 +77,9 @@ def _plan(mode: BatteryMode, start: datetime, projected_soc: float, power_kw: fl
         grid_import_with_battery_kwh=0.5,
         cost_without_battery=1.0,
         cost_with_battery=0.5,
-        expected_value=0.5,
+        electricity_savings=0.5,
+        degradation_cost=0.0,
+        net_value=0.5,
         reason="test",
     )
 

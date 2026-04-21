@@ -4,9 +4,18 @@ from datetime import datetime, timedelta, timezone
 import importlib.util
 from pathlib import Path
 import sys
+import types
 
-OPTIMIZER_PATH = Path(__file__).parents[1] / "custom_components" / "battery_optimizer" / "optimizer.py"
-SPEC = importlib.util.spec_from_file_location("battery_optimizer_optimizer", OPTIMIZER_PATH)
+BASE = Path(__file__).parents[1] / "custom_components" / "battery_optimizer"
+custom_components_pkg = sys.modules.setdefault("custom_components", types.ModuleType("custom_components"))
+custom_components_pkg.__path__ = [str(BASE.parents[1])]
+battery_optimizer_pkg = sys.modules.setdefault(
+    "custom_components.battery_optimizer",
+    types.ModuleType("custom_components.battery_optimizer"),
+)
+battery_optimizer_pkg.__path__ = [str(BASE)]
+
+SPEC = importlib.util.spec_from_file_location("custom_components.battery_optimizer.optimizer", BASE / "optimizer.py")
 optimizer = importlib.util.module_from_spec(SPEC)
 assert SPEC and SPEC.loader
 sys.modules[SPEC.name] = optimizer
@@ -73,6 +82,7 @@ def test_optimizer_holds_when_spread_is_too_small() -> None:
     assert result.valid
     assert result.intervals[0].mode is BatteryMode.HOLD
     assert result.projected_cost_without_battery == result.projected_cost_with_battery
+    assert result.expected_savings == 0
 
 
 def test_optimizer_never_projects_below_reserve() -> None:
@@ -133,3 +143,40 @@ def test_hard_max_soc_requires_very_high_prices() -> None:
 
     assert max_soc == 100
     assert "hard max SOC" in reason
+
+
+def test_reported_savings_match_electricity_cost_delta_only() -> None:
+    input_data = _input([0.05, 0.05, 1.80, 1.90], soc=80)
+    input_data = OptimizationInput(
+        generated_at=input_data.generated_at,
+        prices=input_data.prices,
+        load_forecast=input_data.load_forecast,
+        constraints=BatteryConstraints(
+            capacity_kwh=input_data.constraints.capacity_kwh,
+            soc_percent=input_data.constraints.soc_percent,
+            reserve_soc_percent=input_data.constraints.reserve_soc_percent,
+            preferred_max_soc_percent=input_data.constraints.preferred_max_soc_percent,
+            hard_max_soc_percent=input_data.constraints.hard_max_soc_percent,
+            max_charge_kw=input_data.constraints.max_charge_kw,
+            max_discharge_kw=input_data.constraints.max_discharge_kw,
+            charge_efficiency=input_data.constraints.charge_efficiency,
+            discharge_efficiency=input_data.constraints.discharge_efficiency,
+            degradation_cost_per_kwh=0.5,
+            grid_fee_per_kwh=input_data.constraints.grid_fee_per_kwh,
+            interval_minutes=input_data.constraints.interval_minutes,
+            min_dwell_intervals=input_data.constraints.min_dwell_intervals,
+            price_hysteresis=input_data.constraints.price_hysteresis,
+            optimizer_aggressiveness=input_data.constraints.optimizer_aggressiveness,
+        ),
+        previous_mode=input_data.previous_mode,
+        previous_mode_intervals=input_data.previous_mode_intervals,
+    )
+
+    result = optimize(input_data)
+
+    assert result.valid
+    assert result.expected_savings == round(
+        result.projected_cost_without_battery - result.projected_cost_with_battery,
+        3,
+    )
+    assert result.expected_net_value <= result.expected_savings

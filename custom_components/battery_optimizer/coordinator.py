@@ -27,6 +27,7 @@ from .adaptive import (
     update_adaptive_state,
 )
 from .backend import CommandSnapshot, SolarmanBackend
+from .costs import ElectricityCostComparison, compare_electricity_costs
 from .const import (
     CONF_ADVISORY_ONLY,
     CONF_BATTERY_SOC_ENTITY,
@@ -175,6 +176,7 @@ class BatteryOptimizerCoordinator(DataUpdateCoordinator[OptimizationResult | Non
                 generated_at=dt_util.now(),
                 intervals=[],
                 expected_savings=0,
+                expected_net_value=0,
                 projected_cost_without_battery=0,
                 projected_cost_with_battery=0,
                 current_mode=BatteryMode.HOLD,
@@ -379,7 +381,9 @@ class BatteryOptimizerCoordinator(DataUpdateCoordinator[OptimizationResult | Non
                 grid_import_with_battery_kwh=first.grid_import_with_battery_kwh,
                 cost_without_battery=first.cost_without_battery,
                 cost_with_battery=first.cost_with_battery,
-                expected_value=0,
+                electricity_savings=first.electricity_savings,
+                degradation_cost=first.degradation_cost,
+                net_value=first.net_value,
                 reason=f"Manual override selected: {self.override_mode}.",
             )
         result.current_mode = mode
@@ -457,18 +461,17 @@ class BatteryOptimizerCoordinator(DataUpdateCoordinator[OptimizationResult | Non
 
         baseline_kwh = max(load_kw, 0) * elapsed_hours
         actual_kwh = max(grid_kw, 0) * elapsed_hours
-        baseline_cost = baseline_kwh * price
-        actual_cost = actual_kwh * price
+        comparison = compare_electricity_costs(baseline_kwh, actual_kwh, price)
 
-        self.daily_energy_without_battery_kwh += baseline_kwh
-        self.daily_energy_with_battery_kwh += actual_kwh
-        self.daily_cost_without_battery += baseline_cost
-        self.daily_cost_with_battery += actual_cost
+        self.daily_energy_without_battery_kwh += comparison.baseline_kwh
+        self.daily_energy_with_battery_kwh += comparison.actual_grid_kwh
+        self.daily_cost_without_battery += comparison.cost_without_battery
+        self.daily_cost_with_battery += comparison.cost_with_battery
         self.daily_savings = self.daily_cost_without_battery - self.daily_cost_with_battery
-        self.monthly_energy_without_battery_kwh += baseline_kwh
-        self.monthly_energy_with_battery_kwh += actual_kwh
-        self.monthly_cost_without_battery += baseline_cost
-        self.monthly_cost_with_battery += actual_cost
+        self.monthly_energy_without_battery_kwh += comparison.baseline_kwh
+        self.monthly_energy_with_battery_kwh += comparison.actual_grid_kwh
+        self.monthly_cost_without_battery += comparison.cost_without_battery
+        self.monthly_cost_with_battery += comparison.cost_with_battery
         self.monthly_savings = self.monthly_cost_without_battery - self.monthly_cost_with_battery
         self.cost_tracking_status = (
             f"Accumulating costs from {load_source}, {grid_source}, and optimizer all-in price."
@@ -624,7 +627,9 @@ class BatteryOptimizerCoordinator(DataUpdateCoordinator[OptimizationResult | Non
             grid_import_with_battery_kwh=planned_interval.grid_import_with_battery_kwh,
             cost_without_battery=planned_interval.cost_without_battery,
             cost_with_battery=planned_interval.cost_with_battery,
-            expected_value=planned_interval.expected_value,
+            electricity_savings=planned_interval.electricity_savings,
+            degradation_cost=planned_interval.degradation_cost,
+            net_value=planned_interval.net_value,
             reason=(
                 f"{planned_interval.reason} Emergency current-only update preserves active "
                 f"{self._applied_snapshot.mode.value} mode for the current 30-minute control window."
@@ -888,10 +893,15 @@ def _empty_cost_totals() -> dict[str, float]:
 
 
 def _add_cost_sample(totals: dict[str, float], baseline_kwh: float, actual_kwh: float, price: float) -> None:
-    totals["energy_without_battery_kwh"] += baseline_kwh
-    totals["energy_with_battery_kwh"] += actual_kwh
-    totals["cost_without_battery"] += baseline_kwh * price
-    totals["cost_with_battery"] += actual_kwh * price
+    comparison = compare_electricity_costs(baseline_kwh, actual_kwh, price)
+    _accumulate_cost_comparison(totals, comparison)
+
+
+def _accumulate_cost_comparison(totals: dict[str, float], comparison: ElectricityCostComparison) -> None:
+    totals["energy_without_battery_kwh"] += comparison.baseline_kwh
+    totals["energy_with_battery_kwh"] += comparison.actual_grid_kwh
+    totals["cost_without_battery"] += comparison.cost_without_battery
+    totals["cost_with_battery"] += comparison.cost_with_battery
 
 
 def _command_signature(plan: PlanInterval, command_target_soc: float | None, command_power_kw: float | None) -> tuple[Any, ...]:

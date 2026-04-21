@@ -601,6 +601,19 @@ Their attributes also expose today's summary, RMSE, relative MAE versus the rece
 
 This is deliberately conservative. A future linear programming backend can be added behind the same `optimize()` input/output model.
 
+## Savings Semantics
+
+Battery Optimizer now keeps two concepts separate:
+
+1. `Projected savings`, daily savings, and monthly savings are **electricity-only** comparisons:
+   - cost without battery = what the grid bill would have been if the battery did not offset load
+   - cost with battery = actual grid-import electricity cost
+   - battery wear is **not** included in these savings sensors
+
+2. The optimizer still uses efficiency losses, hysteresis, and degradation cost internally when choosing whether cycling is worth it.
+
+So the dashboard savings numbers answer the bill question directly, while the planning logic can still stay conservative about battery wear.
+
 ## Safety Behavior
 
 - If prices or SOC are missing, the coordinator asks the backend to hold.
