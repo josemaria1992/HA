@@ -488,13 +488,40 @@ def _day_projected_soc_attrs(coordinator: BatteryOptimizerCoordinator, day_key: 
 
 
 def _projected_soc_points_for_day(coordinator: BatteryOptimizerCoordinator, day_key: str) -> list[dict[str, Any]]:
-    if not coordinator.data:
-        return []
     target_day = _target_day(coordinator, day_key)
     points: list[dict[str, Any]] = []
+    now = dt_util.now()
+
+    if day_key == "today":
+        target_soc = coordinator.planned_command_target_soc
+        if target_soc is None:
+            target_soc = coordinator.last_command_target_soc
+        if target_soc is not None:
+            target_mode = None
+            if coordinator.data and coordinator.data.intervals:
+                target_mode = coordinator.data.intervals[0].mode.value
+            elif coordinator._applied_snapshot is not None:
+                target_mode = coordinator._applied_snapshot.mode.value
+            points.append(
+                {
+                    "time": now.isoformat(),
+                    "projected_soc_percent": round(target_soc, 1),
+                    "mode": target_mode,
+                    "target_power_kw": coordinator.planned_command_target_power_kw
+                    if coordinator.planned_command_target_power_kw is not None
+                    else coordinator.last_command_target_power_kw,
+                    "price": coordinator.data.intervals[0].price if coordinator.data and coordinator.data.intervals else None,
+                }
+            )
+
+    if not coordinator.data:
+        return points
+
     for interval in coordinator.data.intervals:
         local_start = dt_util.as_local(interval.start)
         if local_start.date() != target_day:
+            continue
+        if day_key == "today" and points and local_start <= now:
             continue
         points.append(
             {
