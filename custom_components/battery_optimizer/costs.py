@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from datetime import datetime, timedelta
 
 
 @dataclass(frozen=True)
@@ -37,3 +38,62 @@ def compare_electricity_costs(
         cost_with_battery=round(cost_with, 6),
         electricity_savings=round(cost_without - cost_with, 6),
     )
+
+
+def time_weighted_average(
+    series: list[tuple[datetime, float]],
+    start: datetime,
+    end: datetime,
+) -> float | None:
+    """Return the time-weighted average of a stepwise series over a period."""
+
+    if end <= start or not series:
+        return None
+
+    current_value: float | None = None
+    current_time = start
+    weighted_sum = 0.0
+    covered_seconds = 0.0
+
+    for point_time, point_value in series:
+        if point_time <= start:
+            current_value = point_value
+            continue
+        if point_time >= end:
+            break
+        if current_value is not None and point_time > current_time:
+            duration = (point_time - current_time).total_seconds()
+            weighted_sum += current_value * duration
+            covered_seconds += duration
+        current_value = point_value
+        current_time = point_time
+
+    if current_value is not None and end > current_time:
+        duration = (end - current_time).total_seconds()
+        weighted_sum += current_value * duration
+        covered_seconds += duration
+
+    if covered_seconds <= 0:
+        return None
+    return weighted_sum / covered_seconds
+
+
+def build_hourly_average_lookup(
+    series: list[tuple[datetime, float]],
+    start: datetime,
+    end: datetime,
+) -> dict[datetime, float]:
+    """Build supplier-style hourly average prices from stepwise price history."""
+
+    lookup: dict[datetime, float] = {}
+    if end <= start:
+        return lookup
+
+    hour_start = start.replace(minute=0, second=0, microsecond=0)
+    while hour_start < end:
+        hour_end = min(hour_start + timedelta(hours=1), end)
+        average = time_weighted_average(series, hour_start, hour_end)
+        if average is not None:
+            lookup[hour_start] = average
+        hour_start = hour_end
+    return lookup

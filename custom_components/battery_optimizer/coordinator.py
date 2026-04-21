@@ -27,7 +27,11 @@ from .adaptive import (
     update_adaptive_state,
 )
 from .backend import CommandSnapshot, SolarmanBackend
-from .costs import ElectricityCostComparison, compare_electricity_costs
+from .costs import (
+    ElectricityCostComparison,
+    build_hourly_average_lookup,
+    compare_electricity_costs,
+)
 from .const import (
     CONF_ADVISORY_ONLY,
     CONF_BATTERY_SOC_ENTITY,
@@ -48,7 +52,7 @@ from .const import (
     OVERRIDE_FORCE_DISCHARGE,
     OVERRIDE_HOLD,
 )
-from .ingestion import DataIngestor
+from .ingestion import DataIngestor, build_price_comparison
 from .load_forecast import (
     ForecastPoint,
     apply_bias_to_forecast_points,
@@ -432,7 +436,13 @@ class BatteryOptimizerCoordinator(DataUpdateCoordinator[OptimizationResult | Non
             await self._async_store_daily_totals()
             return
 
-        price = result.intervals[0].price if result.intervals else None
+        fee = float(self.config.get(CONF_GRID_FEE_PER_KWH, DEFAULT_GRID_FEE_PER_KWH))
+        billing_price, price_source = _read_current_billing_hourly_price(
+            self.hass,
+            self.config.get(CONF_PRICE_ENTITY),
+            now,
+        )
+        price = billing_price + fee if billing_price is not None else None
         load_kw = _read_kw(self.hass, self.config.get(CONF_LOAD_POWER_ENTITY))
         load_source = "live load sensor"
         if load_kw is None and result.intervals:
@@ -474,7 +484,7 @@ class BatteryOptimizerCoordinator(DataUpdateCoordinator[OptimizationResult | Non
         self.monthly_cost_with_battery += comparison.cost_with_battery
         self.monthly_savings = self.monthly_cost_without_battery - self.monthly_cost_with_battery
         self.cost_tracking_status = (
-            f"Accumulating costs from {load_source}, {grid_source}, and optimizer all-in price."
+            f"Accumulating costs from {load_source}, {grid_source}, and {price_source} all-in price."
         )
         await self._async_store_daily_totals()
 
@@ -789,6 +799,9 @@ def _estimate_costs_from_history(
         entity_id: _entity_unit(hass, entity_id)
         for entity_id in [load_entity, *phase_entities]
     }
+    hourly_price_lookup = build_hourly_average_lookup(histories.get(price_entity, []), start, end)
+    if not hourly_price_lookup:
+        return None
 
     fee = float(config.get(CONF_GRID_FEE_PER_KWH, DEFAULT_GRID_FEE_PER_KWH))
     month = _empty_cost_totals()
@@ -799,7 +812,8 @@ def _estimate_costs_from_history(
         next_cursor = min(cursor + step, end)
         hours = (next_cursor - cursor).total_seconds() / 3600
         load_kw = _series_value_at(histories.get(load_entity, []), cursor)
-        price = _series_value_at(histories.get(price_entity, []), cursor)
+        hour_start = cursor.replace(minute=0, second=0, microsecond=0)
+        price = hourly_price_lookup.get(hour_start)
         phase_values = [_series_value_at(histories.get(entity_id, []), cursor) for entity_id in phase_entities]
         if load_kw is None or price is None or any(value is None for value in phase_values):
             cursor = next_cursor
@@ -845,6 +859,30 @@ def _history_series(
             points.append((end, current))
         series[entity_id] = sorted(points, key=lambda item: item[0])
     return series
+
+
+def _read_current_billing_hourly_price(
+    hass: HomeAssistant,
+    entity_id: str | None,
+    when: datetime,
+) -> tuple[float | None, str]:
+    """Read the supplier-style hourly average Nord Pool price for the current hour."""
+
+    if not entity_id:
+        return None, "missing price entity"
+    day = build_price_comparison(hass, entity_id).get("today", {})
+    hour_start = dt_util.as_local(when).replace(minute=0, second=0, microsecond=0)
+    for point in day.get("hourly_average", []):
+        point_time = dt_util.parse_datetime(point.get("time"))
+        if point_time and dt_util.as_local(point_time).replace(minute=0, second=0, microsecond=0) == hour_start:
+            try:
+                return float(point["price"]), "supplier-style hourly-average"
+            except (TypeError, ValueError, KeyError):
+                return None, "invalid hourly-average price"
+    state = hass.states.get(entity_id)
+    if state is None:
+        return None, "missing price state"
+    return _coerce_float_state(state.state), "price sensor state fallback"
 
 
 def _series_value_at(series: list[tuple[datetime, float]], when: datetime) -> float | None:
