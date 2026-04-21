@@ -42,6 +42,7 @@ SENSORS: tuple[BatteryOptimizerSensorDescription, ...] = (
         native_unit_of_measurement="%",
         value_fn=lambda coordinator: _current_projected_soc_point(coordinator).get("projected_soc_percent"),
         attrs_fn=lambda coordinator: {
+            "projected_soc_source": _current_projected_soc_point(coordinator).get("source"),
             "command_target_soc_percent": coordinator.last_command_target_soc,
             "command_target_power_kw": coordinator.last_command_target_power_kw,
             "planned_command_target_soc_percent": coordinator.planned_command_target_soc,
@@ -631,12 +632,33 @@ def _projected_soc_points_for_day(coordinator: BatteryOptimizerCoordinator, day_
 
 def _current_projected_soc_point(coordinator: BatteryOptimizerCoordinator) -> dict[str, Any]:
     now = dt_util.now()
+    active_window_locked = coordinator._is_control_window_locked()
+
+    if active_window_locked and coordinator._applied_snapshot is not None and coordinator._applied_plan is not None:
+        active_target_soc = coordinator.last_command_target_soc
+        if active_target_soc is None:
+            active_target_soc = coordinator._applied_plan.projected_soc_percent
+        active_target_power_kw = coordinator.last_command_target_power_kw
+        if active_target_power_kw is None:
+            active_target_power_kw = coordinator._applied_plan.target_power_kw
+        return {
+            "time": now.isoformat(),
+            "projected_soc_percent": round(active_target_soc, 1),
+            "mode": coordinator._applied_snapshot.mode.value,
+            "target_power_kw": active_target_power_kw,
+            "price": coordinator._applied_plan.price,
+            "source": "active_command",
+        }
+
     target_soc = coordinator.planned_command_target_soc
+    source = "planned_command"
     if target_soc is None:
         target_soc = coordinator.last_command_target_soc
+        source = "last_command"
     if target_soc is None:
         if coordinator.data and coordinator.data.intervals:
             target_soc = coordinator.data.projected_soc_percent
+            source = "planned_interval"
         else:
             return {}
 
@@ -653,7 +675,10 @@ def _current_projected_soc_point(coordinator: BatteryOptimizerCoordinator) -> di
         "target_power_kw": coordinator.planned_command_target_power_kw
         if coordinator.planned_command_target_power_kw is not None
         else coordinator.last_command_target_power_kw,
-        "price": coordinator.data.intervals[0].price if coordinator.data and coordinator.data.intervals else None,
+        "price": coordinator.data.intervals[0].price if coordinator.data and coordinator.data.intervals else (
+            coordinator._applied_plan.price if coordinator._applied_plan is not None else None
+        ),
+        "source": source,
     }
 
 
