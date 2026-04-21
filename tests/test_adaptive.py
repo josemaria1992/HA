@@ -111,7 +111,7 @@ def test_compute_command_targets_pushes_charge_target_beyond_current_soc() -> No
     assert targets.horizon_intervals == 3
 
 
-def test_compute_command_targets_pushes_discharge_target_low_enough_for_window() -> None:
+def test_compute_command_targets_uses_reserve_floor_for_discharge_window() -> None:
     start = datetime(2026, 4, 21, tzinfo=timezone.utc)
     targets = compute_command_targets(
         [
@@ -125,7 +125,7 @@ def test_compute_command_targets_pushes_discharge_target_low_enough_for_window()
     )
 
     assert targets.target_power_kw == 2.0
-    assert targets.target_soc_percent == 75.0
+    assert targets.target_soc_percent == 10.0
 
 
 def test_update_adaptive_state_learns_bias_and_response() -> None:

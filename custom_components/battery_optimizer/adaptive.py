@@ -208,10 +208,7 @@ def compute_command_targets(
             constraints.hard_max_soc_percent,
         )
     else:
-        target_soc = max(
-            min(interval.projected_soc_percent for interval in same_mode),
-            constraints.reserve_soc_percent,
-        )
+        target_soc = constraints.reserve_soc_percent
 
     return CommandTargets(
         target_power_kw=round(target_power_kw, 3),
