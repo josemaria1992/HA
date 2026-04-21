@@ -279,6 +279,10 @@ def _plan_attrs(coordinator: BatteryOptimizerCoordinator) -> dict[str, Any]:
         return {}
     return {
         ATTR_REASONS: coordinator.data.reasons,
+        "active_control_window_locked": coordinator._is_control_window_locked(),
+        "active_command_mode": coordinator._applied_snapshot.mode.value
+        if coordinator._applied_snapshot is not None
+        else None,
         "command_target_soc_percent": coordinator.last_command_target_soc,
         "command_target_power_kw": coordinator.last_command_target_power_kw,
         "planned_command_target_soc_percent": coordinator.planned_command_target_soc,

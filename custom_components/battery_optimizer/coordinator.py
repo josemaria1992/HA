@@ -254,9 +254,11 @@ class BatteryOptimizerCoordinator(DataUpdateCoordinator[OptimizationResult | Non
                 _LOGGER.debug("Battery optimizer deferred inverter write: %s", apply_reason)
                 return apply_reason
             if apply_kind == "current_only":
+                current_only_plan = self._current_only_plan(result.intervals[0])
+                current_only_power_kw = self._current_only_power_kw(current_only_plan, target_power_kw)
                 command = await self.backend.apply_current_only(
-                    result.intervals[0],
-                    command_power_kw=target_power_kw,
+                    current_only_plan,
+                    command_power_kw=current_only_power_kw,
                 )
             else:
                 command = await self.backend.apply(
@@ -511,6 +513,48 @@ class BatteryOptimizerCoordinator(DataUpdateCoordinator[OptimizationResult | Non
             self.adaptive_state,
             DEFAULT_COMMAND_WRITE_INTERVAL_MINUTES,
         )
+
+    def _current_only_plan(self, planned_interval: PlanInterval) -> PlanInterval:
+        if not self._is_control_window_locked():
+            return planned_interval
+        if self._applied_plan is None or self._applied_snapshot is None:
+            return planned_interval
+        if self._applied_snapshot.mode is BatteryMode.HOLD:
+            return planned_interval
+        return PlanInterval(
+            start=planned_interval.start,
+            mode=self._applied_snapshot.mode,
+            target_power_kw=self.last_command_target_power_kw
+            if self.last_command_target_power_kw is not None
+            else self._applied_plan.target_power_kw,
+            projected_soc_percent=planned_interval.projected_soc_percent,
+            price=planned_interval.price,
+            load_kw=planned_interval.load_kw,
+            grid_import_without_battery_kwh=planned_interval.grid_import_without_battery_kwh,
+            grid_import_with_battery_kwh=planned_interval.grid_import_with_battery_kwh,
+            cost_without_battery=planned_interval.cost_without_battery,
+            cost_with_battery=planned_interval.cost_with_battery,
+            expected_value=planned_interval.expected_value,
+            reason=(
+                f"{planned_interval.reason} Emergency current-only update preserves active "
+                f"{self._applied_snapshot.mode.value} mode for the current 30-minute control window."
+            ),
+        )
+
+    def _current_only_power_kw(self, current_only_plan: PlanInterval, planned_power_kw: float | None) -> float | None:
+        if not self._is_control_window_locked():
+            return planned_power_kw
+        if self._applied_snapshot is None or self._applied_snapshot.mode is BatteryMode.HOLD:
+            return planned_power_kw
+        return self.last_command_target_power_kw if self.last_command_target_power_kw is not None else current_only_plan.target_power_kw
+
+    def _is_control_window_locked(self) -> bool:
+        if self._last_full_device_write is None or self._applied_plan is None:
+            return False
+        now = dt_util.now()
+        current_window = _control_window_start(now, DEFAULT_COMMAND_WRITE_INTERVAL_MINUTES)
+        applied_window = _control_window_start(self._last_full_device_write, DEFAULT_COMMAND_WRITE_INTERVAL_MINUTES)
+        return current_window == applied_window
 
     async def _async_reconcile_if_needed(self, skipped_reason: str) -> str | None:
         if self._applied_snapshot is None or self._applied_plan is None:
