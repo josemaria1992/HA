@@ -155,6 +155,10 @@ def _build_forecast_from_states(
     holiday_dates = holiday_dates or set()
     now = dt_util.as_local(now) if now is not None else None
 
+    # Aggregate recorder noise down to one average value per day and optimizer bucket
+    # so days with frequent state updates do not overpower quieter days.
+    raw_interval_points: dict[tuple[date, int, int, int, str], list[tuple[datetime, float]]] = defaultdict(list)
+    raw_hour_points: dict[tuple[date, int, int, str], list[tuple[datetime, float]]] = defaultdict(list)
     buckets: dict[tuple[int, int, int], list[float]] = defaultdict(list)
     hourly_buckets: dict[tuple[int, int], list[float]] = defaultdict(list)
     profile_buckets: dict[tuple[str, int, int], list[float]] = defaultdict(list)
@@ -170,13 +174,25 @@ def _build_forecast_from_states(
         changed = dt_util.as_local(state.last_changed)
         profile = _day_profile(changed.date(), holiday_dates)
         interval_bucket = _interval_bucket(changed.minute, interval_minutes)
-        buckets[(changed.weekday(), changed.hour, interval_bucket)].append(value)
-        hourly_buckets[(changed.weekday(), changed.hour)].append(value)
-        profile_buckets[(profile, changed.hour, interval_bucket)].append(value)
-        profile_hourly_buckets[(profile, changed.hour)].append(value)
-        recent_interval_points[(changed.hour, interval_bucket)].append((changed, value))
-        recent_hour_points[changed.hour].append((changed, value))
-        global_values.append(value)
+        raw_interval_points[(changed.date(), changed.weekday(), changed.hour, interval_bucket, profile)].append(
+            (changed, value)
+        )
+        raw_hour_points[(changed.date(), changed.weekday(), changed.hour, profile)].append((changed, value))
+
+    for (_, weekday, hour, interval_bucket, profile), values in raw_interval_points.items():
+        averaged_value = _average_entry_values(values)
+        representative_time = max(changed for changed, _ in values)
+        buckets[(weekday, hour, interval_bucket)].append(averaged_value)
+        profile_buckets[(profile, hour, interval_bucket)].append(averaged_value)
+        recent_interval_points[(hour, interval_bucket)].append((representative_time, averaged_value))
+        global_values.append(averaged_value)
+
+    for (_, weekday, hour, profile), values in raw_hour_points.items():
+        averaged_value = _average_entry_values(values)
+        representative_time = max(changed for changed, _ in values)
+        hourly_buckets[(weekday, hour)].append(averaged_value)
+        profile_hourly_buckets[(profile, hour)].append(averaged_value)
+        recent_hour_points[hour].append((representative_time, averaged_value))
 
     fallback = current_kw if current_kw is not None else _trimmed_mean(global_values) or 0.0
     points: list[ForecastPoint] = []
@@ -347,3 +363,7 @@ def _trimmed_mean(values: list[float]) -> float | None:
         trim = max(int(len(ordered) * 0.1), 1)
         ordered = ordered[trim:-trim] or ordered
     return sum(ordered) / len(ordered)
+
+
+def _average_entry_values(values: list[tuple[datetime, float]]) -> float:
+    return sum(value for _, value in values) / len(values)

@@ -469,7 +469,7 @@ def _load_forecast_attrs(coordinator: BatteryOptimizerCoordinator) -> dict[str, 
             }
             for point in coordinator.load_forecast[:48]
         ],
-        "method": "Forecast prefers weekday-interval history, then workday/weekend-holiday profile history, blends with a rolling recent trend when available, and falls back to current load if history is too thin.",
+        "method": "Forecast first averages recorder history into one value per day and optimizer interval, then prefers weekday-interval history, then workday/weekend-holiday profile history, blends with a rolling recent trend when available, and falls back to current load if history is too thin.",
     }
 
 

@@ -110,3 +110,36 @@ def test_forecast_uses_profile_history_for_holiday_targets() -> None:
     assert point.profile == PROFILE_WEEKEND_HOLIDAY
     assert point.source.startswith("profile_interval_history")
     assert point.load_kw > 2.0
+
+
+def test_forecast_averages_each_day_interval_before_learning_pattern() -> None:
+    now = datetime(2026, 4, 21, 12, 0, tzinfo=timezone.utc)
+    target = datetime(2026, 4, 22, 8, 0, tzinfo=timezone.utc)
+    states = [
+        _state(datetime(2026, 4, 1, 8, 0, tzinfo=timezone.utc), 1.0),
+        _state(datetime(2026, 4, 1, 8, 5, tzinfo=timezone.utc), 1.0),
+        _state(datetime(2026, 4, 1, 8, 10, tzinfo=timezone.utc), 1.0),
+        _state(datetime(2026, 4, 1, 8, 15, tzinfo=timezone.utc), 1.0),
+        _state(datetime(2026, 4, 1, 8, 20, tzinfo=timezone.utc), 1.0),
+        _state(datetime(2026, 4, 1, 8, 25, tzinfo=timezone.utc), 1.0),
+        _state(datetime(2026, 4, 1, 8, 30, tzinfo=timezone.utc), 1.0),
+        _state(datetime(2026, 4, 1, 8, 35, tzinfo=timezone.utc), 1.0),
+        _state(datetime(2026, 4, 1, 8, 40, tzinfo=timezone.utc), 1.0),
+        _state(datetime(2026, 4, 1, 8, 45, tzinfo=timezone.utc), 1.0),
+        _state(datetime(2026, 4, 8, 8, 0, tzinfo=timezone.utc), 3.0),
+        _state(datetime(2026, 4, 15, 8, 0, tzinfo=timezone.utc), 3.0),
+    ]
+
+    points = _build_forecast_from_states(
+        states=states,
+        starts=[target],
+        interval_minutes=60,
+        min_samples=3,
+        current_kw=0.8,
+        holiday_dates=set(),
+        now=now,
+    )
+
+    point = points[0]
+    assert point.pattern_kw == 2.333
+    assert point.samples == 3

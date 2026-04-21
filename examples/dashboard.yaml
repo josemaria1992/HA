@@ -314,11 +314,14 @@ cards:
         show: true
     series:
       - entity: sensor.inverter_load_power
-        name: Actual load
+        name: Actual load (30 min avg)
         type: line
         curve: smooth
         transform: |
           return x > 50 ? x / 1000 : x;
+        group_by:
+          func: avg
+          duration: 30min
       - entity: sensor.battery_optimizer_load_forecast
         name: Forecast load
         type: line

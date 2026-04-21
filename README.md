@@ -475,11 +475,14 @@ cards:
         show: true
     series:
       - entity: sensor.inverter_load_power
-        name: Actual load
+        name: Actual load (30 min avg)
         type: line
         curve: smooth
         transform: |
           return x > 50 ? x / 1000 : x;
+        group_by:
+          func: avg
+          duration: 30min
       - entity: sensor.battery_optimizer_load_forecast
         name: Forecast load
         type: line
@@ -557,10 +560,11 @@ The optimizer uses dependency-free dynamic programming rather than a heavy MILP 
 
 Load forecasting uses recorder history by default. It now:
 
-1. learns exact weekday-and-interval patterns
-2. learns separate workday vs weekend/holiday profiles
-3. blends those historical patterns with a rolling recent trend
-4. falls back to current load when history is too thin
+1. averages recorder history into one value per day and optimizer interval so noisy high-frequency updates do not outweigh quieter days
+2. learns exact weekday-and-interval patterns
+3. learns separate workday vs weekend/holiday profiles
+4. blends those historical patterns with a rolling recent trend
+5. falls back to current load when history is too thin
 
 The `sensor.battery_optimizer_load_forecast` attributes show the forecast source, sample count, workday/weekend-holiday profile, raw pattern value, recent-trend value, current-load fallback, and adaptive bias for each point. A dedicated `load_forecast_entity` can still be configured for external forecasts.
 
