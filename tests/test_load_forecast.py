@@ -47,9 +47,9 @@ PROFILE_WORKDAY = load_forecast.PROFILE_WORKDAY
 _day_profile = load_forecast._day_profile
 
 
-def _state(when: datetime, kw: float):
-    watts = kw * 1000 if kw < 50 else kw
-    return SimpleNamespace(state=str(watts), last_changed=when)
+def _state(when: datetime, kw: float, unit: str = "W"):
+    raw_value = kw * 1000 if unit.lower() == "w" else kw
+    return SimpleNamespace(state=str(raw_value), last_changed=when, attributes={"unit_of_measurement": unit})
 
 
 def test_day_profile_treats_holidays_like_weekends() -> None:
@@ -143,3 +143,25 @@ def test_forecast_averages_each_day_interval_before_learning_pattern() -> None:
     point = points[0]
     assert point.pattern_kw == 2.333
     assert point.samples == 3
+
+
+def test_forecast_uses_entity_unit_for_small_watt_history_values() -> None:
+    target = datetime(2026, 4, 22, 8, 0, tzinfo=timezone.utc)
+    states = [
+        _state(datetime(2026, 4, 1, 8, 0, tzinfo=timezone.utc), 0.012, unit="W"),
+        _state(datetime(2026, 4, 8, 8, 0, tzinfo=timezone.utc), 0.018, unit="W"),
+        _state(datetime(2026, 4, 15, 8, 0, tzinfo=timezone.utc), 0.015, unit="W"),
+    ]
+
+    points = _build_forecast_from_states(
+        states=states,
+        starts=[target],
+        interval_minutes=60,
+        min_samples=3,
+        current_kw=0.01,
+        power_unit="W",
+        holiday_dates=set(),
+        now=datetime(2026, 4, 21, 12, 0, tzinfo=timezone.utc),
+    )
+
+    assert points[0].load_kw < 0.05

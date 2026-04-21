@@ -21,6 +21,7 @@ from .const import (
     DEFAULT_LOAD_HISTORY_DAYS,
 )
 from .optimizer import LoadPoint
+from .power import power_value_to_kw
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -61,6 +62,7 @@ async def async_build_history_load_forecast(
     days = int(config.get(CONF_LOAD_HISTORY_DAYS, DEFAULT_LOAD_HISTORY_DAYS))
     end_time = dt_util.now()
     start_time = end_time - timedelta(days=days)
+    power_unit = _entity_unit(hass, entity_id)
     country_code = _country_code(hass)
     holiday_dates = await hass.async_add_executor_job(
         _build_holiday_date_set,
@@ -83,6 +85,7 @@ async def async_build_history_load_forecast(
         interval_minutes=interval_minutes,
         min_samples=int(config.get(CONF_LOAD_FORECAST_MIN_SAMPLES, DEFAULT_LOAD_FORECAST_MIN_SAMPLES)),
         current_kw=current_kw,
+        power_unit=power_unit,
         holiday_dates=holiday_dates,
         now=end_time,
     )
@@ -149,6 +152,7 @@ def _build_forecast_from_states(
     interval_minutes: int,
     min_samples: int,
     current_kw: float | None,
+    power_unit: str | None = None,
     holiday_dates: set[date] | None = None,
     now: datetime | None = None,
 ) -> list[ForecastPoint]:
@@ -168,7 +172,7 @@ def _build_forecast_from_states(
     global_values: list[float] = []
 
     for state in states:
-        value = _state_kw(state)
+        value = _state_kw(state, power_unit)
         if value is None:
             continue
         changed = dt_util.as_local(state.last_changed)
@@ -340,12 +344,12 @@ def _interval_bucket(minute: int, interval_minutes: int) -> int:
     return int(minute // max(interval_minutes, 1))
 
 
-def _state_kw(state: State) -> float | None:
+def _state_kw(state: State, unit: str | None = None) -> float | None:
     try:
         value = float(state.state)
     except (TypeError, ValueError):
         return None
-    return value / 1000 if abs(value) > 50 else value
+    return power_value_to_kw(value, unit or _state_unit(state))
 
 
 def _read_current_kw(hass: HomeAssistant, entity_id: str) -> float | None:
@@ -367,3 +371,17 @@ def _trimmed_mean(values: list[float]) -> float | None:
 
 def _average_entry_values(values: list[tuple[datetime, float]]) -> float:
     return sum(value for _, value in values) / len(values)
+
+
+def _entity_unit(hass: HomeAssistant, entity_id: str) -> str | None:
+    state = hass.states.get(entity_id)
+    if state is None:
+        return None
+    return _state_unit(state)
+
+
+def _state_unit(state: State) -> str | None:
+    unit = getattr(state, "attributes", {}).get("unit_of_measurement")
+    if unit is None:
+        unit = getattr(state, "unit_of_measurement", None)
+    return str(unit) if unit is not None else None

@@ -92,6 +92,7 @@ Before real control is enabled, confirm these values in the config flow:
 - `sensor.inverter_battery_voltage` reports battery voltage in volts.
 - `number.inverter_battery_max_charging_current` and `number.inverter_battery_max_discharging_current` are the actual safety current limits in amps.
 - `sensor.inverter_external_ct1_power`, `ct2`, and `ct3` represent live grid import/export per phase. Daily savings uses positive import from these sensors.
+- Power-based cost tracking now uses each entity's Home Assistant unit metadata (`W` vs `kW`) instead of guessing from the numeric magnitude, so low-watt readings no longer inflate costs.
 - Month-to-date and today cost sensors are backfilled from recorder history when possible. If recorder history or historical price states are missing, they start accumulating from the current runtime.
 - The inverter peak shaving number still expects total watts, but Battery Optimizer watches individual phase currents and dynamically lowers that total-watt threshold when any phase reaches the per-phase limit.
 

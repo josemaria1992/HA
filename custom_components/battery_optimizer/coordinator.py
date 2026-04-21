@@ -55,6 +55,7 @@ from .load_forecast import (
     to_load_points,
 )
 from .optimizer import BatteryMode, OptimizationResult, PlanInterval, optimize
+from .power import power_value_to_kw
 
 _LOGGER = logging.getLogger(__name__)
 STORE_VERSION = 1
@@ -140,8 +141,7 @@ class BatteryOptimizerCoordinator(DataUpdateCoordinator[OptimizationResult | Non
             charge_response_factor=float(stored.get("adaptive_charge_response_factor", 1.0)),
             discharge_response_factor=float(stored.get("adaptive_discharge_response_factor", 1.0)),
         )
-        if self.monthly_cost_with_battery == 0 and self.monthly_energy_with_battery_kwh == 0:
-            await self._async_backfill_cost_totals()
+        await self._async_backfill_cost_totals()
 
     async def _async_update_data(self) -> OptimizationResult | None:
         seed_input, seed_status = self.ingestor.build_input(self._previous_mode, self._previous_mode_intervals)
@@ -473,7 +473,7 @@ class BatteryOptimizerCoordinator(DataUpdateCoordinator[OptimizationResult | Non
             }
         )
 
-    async def _async_backfill_cost_totals(self) -> None:
+    async def _async_backfill_cost_totals(self) -> bool:
         """Best-effort month/today cost backfill from recorder history."""
 
         now = dt_util.now()
@@ -488,8 +488,9 @@ class BatteryOptimizerCoordinator(DataUpdateCoordinator[OptimizationResult | Non
             today_start,
         )
         if not estimates:
-            self.cost_tracking_status = "Recorder backfill unavailable; month totals will accumulate from runtime samples."
-            return
+            if self.monthly_cost_with_battery == 0 and self.monthly_energy_with_battery_kwh == 0:
+                self.cost_tracking_status = "Recorder backfill unavailable; month totals will accumulate from runtime samples."
+            return False
         month = estimates["month"]
         today = estimates["today"]
         self.monthly_cost_without_battery = month["cost_without_battery"]
@@ -504,6 +505,7 @@ class BatteryOptimizerCoordinator(DataUpdateCoordinator[OptimizationResult | Non
         self.daily_energy_with_battery_kwh = today["energy_with_battery_kwh"]
         self.cost_tracking_status = "Month and day totals were backfilled from recorder history."
         await self._async_store_daily_totals()
+        return True
 
     def _should_write_result(self, result: OptimizationResult, command_targets) -> tuple[str, str]:
         if not result.intervals:
@@ -705,10 +707,16 @@ def _month_key(value: date) -> str:
 
 
 def _read_kw(hass: HomeAssistant, entity_id: str | None) -> float | None:
-    value = _read_number(hass, entity_id)
-    if value is None:
+    if not entity_id:
         return None
-    return value / 1000 if abs(value) > 50 else value
+    state = hass.states.get(entity_id)
+    if state is None or state.state in {"unknown", "unavailable", ""}:
+        return None
+    try:
+        value = float(state.state)
+    except ValueError:
+        return None
+    return power_value_to_kw(value, _state_unit(state))
 
 
 def _read_total_grid_import_kw(hass: HomeAssistant, entity_ids: list[str]) -> float | None:
@@ -749,6 +757,10 @@ def _estimate_costs_from_history(
     histories = _history_series(hass, entities, start, end)
     if not histories:
         return None
+    unit_by_entity = {
+        entity_id: _entity_unit(hass, entity_id)
+        for entity_id in [load_entity, *phase_entities]
+    }
 
     fee = float(config.get(CONF_GRID_FEE_PER_KWH, DEFAULT_GRID_FEE_PER_KWH))
     month = _empty_cost_totals()
@@ -764,8 +776,11 @@ def _estimate_costs_from_history(
         if load_kw is None or price is None or any(value is None for value in phase_values):
             cursor = next_cursor
             continue
-        load_kw = _normalise_kw(load_kw)
-        grid_kw = sum(max(_normalise_kw(value or 0), 0) for value in phase_values)
+        load_kw = power_value_to_kw(load_kw, unit_by_entity.get(load_entity))
+        grid_kw = sum(
+            max(power_value_to_kw(value or 0, unit_by_entity.get(entity_id)), 0)
+            for entity_id, value in zip(phase_entities, phase_values)
+        )
         all_in_price = price + fee
         baseline_kwh = max(load_kw, 0) * hours
         actual_kwh = max(grid_kw, 0) * hours
@@ -821,7 +836,23 @@ def _coerce_float_state(value: Any) -> float | None:
 
 
 def _normalise_kw(value: float) -> float:
-    return value / 1000 if abs(value) > 50 else value
+    return power_value_to_kw(value, None)
+
+
+def _entity_unit(hass: HomeAssistant, entity_id: str | None) -> str | None:
+    if not entity_id:
+        return None
+    state = hass.states.get(entity_id)
+    if state is None:
+        return None
+    return _state_unit(state)
+
+
+def _state_unit(state) -> str | None:
+    unit = getattr(state, "attributes", {}).get("unit_of_measurement")
+    if unit is None:
+        unit = getattr(state, "unit_of_measurement", None)
+    return str(unit) if unit is not None else None
 
 
 def _empty_cost_totals() -> dict[str, float]:
