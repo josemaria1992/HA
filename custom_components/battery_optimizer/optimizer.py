@@ -170,6 +170,7 @@ def optimize(input_data: OptimizationInput) -> OptimizationResult:
     soc = min(max(constraints.soc_percent, 0), 100)
     reserve_kwh = constraints.capacity_kwh * constraints.reserve_soc_percent / 100
     max_soc, charge_ceiling_reason = _select_charge_ceiling_soc(total_prices, constraints)
+    reasons.append(f"Charge ceiling set to {max_soc:.0f}%.")
     reasons.append(charge_ceiling_reason)
     max_kwh = constraints.capacity_kwh * max_soc / 100
 
