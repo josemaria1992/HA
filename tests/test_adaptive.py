@@ -35,9 +35,13 @@ LoadPoint = optimizer.LoadPoint
 PlanInterval = optimizer.PlanInterval
 AdaptiveState = adaptive.AdaptiveState
 CommandTargets = adaptive.CommandTargets
+ForecastAccuracySummary = adaptive.ForecastAccuracySummary
 apply_load_bias = adaptive.apply_load_bias
+build_forecast_accuracy_sample = adaptive.build_forecast_accuracy_sample
 build_interval_snapshot = adaptive.build_interval_snapshot
 compute_command_targets = adaptive.compute_command_targets
+summarize_forecast_accuracy = adaptive.summarize_forecast_accuracy
+trim_forecast_accuracy_samples = adaptive.trim_forecast_accuracy_samples
 update_adaptive_state = adaptive.update_adaptive_state
 
 
@@ -134,3 +138,55 @@ def test_update_adaptive_state_learns_bias_and_response() -> None:
 
     assert updated.load_bias_kw > 0
     assert updated.charge_response_factor < 1.0
+
+
+def test_forecast_accuracy_summary_reports_bias_and_mae() -> None:
+    start = datetime(2026, 4, 21, tzinfo=timezone.utc)
+    snapshot = build_interval_snapshot(_plan(BatteryMode.HOLD, start, 50.0, 0.0), 50.0)
+    sample_1 = build_forecast_accuracy_sample(snapshot, actual_load_kw=2.0)
+    sample_2 = build_forecast_accuracy_sample(
+        adaptive.IntervalSnapshot(
+            start=start + timedelta(hours=1),
+            mode=BatteryMode.HOLD,
+            forecast_load_kw=1.0,
+            start_soc_percent=50.0,
+            projected_soc_percent=50.0,
+        ),
+        actual_load_kw=0.5,
+    )
+    assert sample_1 is not None
+    assert sample_2 is not None
+
+    summary = summarize_forecast_accuracy([sample_1, sample_2])
+
+    assert isinstance(summary, ForecastAccuracySummary)
+    assert summary.sample_count == 2
+    assert summary.mean_error_kw == 0.0
+    assert summary.mean_absolute_error_kw == 0.5
+    assert summary.rmse_kw > 0
+    assert summary.relative_mae_percent is not None
+    assert summary.last_error_kw == -0.5
+
+
+def test_trim_forecast_accuracy_samples_keeps_recent_history() -> None:
+    now = datetime(2026, 4, 21, 12, 0, tzinfo=timezone.utc)
+    recent = adaptive.ForecastAccuracySample(
+        start=now - timedelta(days=1),
+        forecast_load_kw=1.0,
+        actual_load_kw=1.2,
+        error_kw=0.2,
+        absolute_error_kw=0.2,
+        squared_error_kw=0.04,
+    )
+    stale = adaptive.ForecastAccuracySample(
+        start=now - timedelta(days=10),
+        forecast_load_kw=1.0,
+        actual_load_kw=0.8,
+        error_kw=-0.2,
+        absolute_error_kw=0.2,
+        squared_error_kw=0.04,
+    )
+
+    trimmed = trim_forecast_accuracy_samples([stale, recent], now=now)
+
+    assert trimmed == [recent]

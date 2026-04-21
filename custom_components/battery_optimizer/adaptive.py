@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from datetime import datetime, timedelta
 import math
 
 from .const import DEFAULT_COMMAND_WRITE_INTERVAL_MINUTES
@@ -36,6 +37,33 @@ class CommandTargets:
     target_power_kw: float
     target_soc_percent: float
     horizon_intervals: int
+
+
+@dataclass(frozen=True)
+class ForecastAccuracySample:
+    """Observed load-forecast error for one completed interval."""
+
+    start: datetime
+    forecast_load_kw: float
+    actual_load_kw: float
+    error_kw: float
+    absolute_error_kw: float
+    squared_error_kw: float
+
+
+@dataclass(frozen=True)
+class ForecastAccuracySummary:
+    """Summary statistics for recent forecast performance."""
+
+    sample_count: int = 0
+    mean_error_kw: float = 0.0
+    mean_absolute_error_kw: float = 0.0
+    rmse_kw: float = 0.0
+    mean_actual_load_kw: float = 0.0
+    relative_mae_percent: float | None = None
+    last_forecast_load_kw: float | None = None
+    last_actual_load_kw: float | None = None
+    last_error_kw: float | None = None
 
 
 def apply_load_bias(load_points: list[LoadPoint], bias_kw: float) -> list[LoadPoint]:
@@ -80,6 +108,64 @@ def update_adaptive_state(
         charge_response_factor=round(charge_response, 3),
         discharge_response_factor=round(discharge_response, 3),
     )
+
+
+def build_forecast_accuracy_sample(
+    snapshot: IntervalSnapshot,
+    actual_load_kw: float | None,
+) -> ForecastAccuracySample | None:
+    """Build an accuracy sample from a completed interval."""
+
+    if actual_load_kw is None:
+        return None
+    error_kw = actual_load_kw - snapshot.forecast_load_kw
+    return ForecastAccuracySample(
+        start=snapshot.start,
+        forecast_load_kw=round(snapshot.forecast_load_kw, 3),
+        actual_load_kw=round(actual_load_kw, 3),
+        error_kw=round(error_kw, 3),
+        absolute_error_kw=round(abs(error_kw), 3),
+        squared_error_kw=round(error_kw * error_kw, 6),
+    )
+
+
+def summarize_forecast_accuracy(
+    samples: list[ForecastAccuracySample],
+) -> ForecastAccuracySummary:
+    """Summarize forecast accuracy over a recent sample window."""
+
+    if not samples:
+        return ForecastAccuracySummary()
+
+    count = len(samples)
+    mean_error = sum(sample.error_kw for sample in samples) / count
+    mae = sum(sample.absolute_error_kw for sample in samples) / count
+    rmse = math.sqrt(sum(sample.squared_error_kw for sample in samples) / count)
+    mean_actual = sum(sample.actual_load_kw for sample in samples) / count
+    relative_mae_percent = (mae / mean_actual * 100.0) if mean_actual >= 0.1 else None
+    last = samples[-1]
+    return ForecastAccuracySummary(
+        sample_count=count,
+        mean_error_kw=round(mean_error, 3),
+        mean_absolute_error_kw=round(mae, 3),
+        rmse_kw=round(rmse, 3),
+        mean_actual_load_kw=round(mean_actual, 3),
+        relative_mae_percent=round(relative_mae_percent, 1) if relative_mae_percent is not None else None,
+        last_forecast_load_kw=last.forecast_load_kw,
+        last_actual_load_kw=last.actual_load_kw,
+        last_error_kw=last.error_kw,
+    )
+
+
+def trim_forecast_accuracy_samples(
+    samples: list[ForecastAccuracySample],
+    now: datetime,
+    max_age: timedelta = timedelta(days=7),
+) -> list[ForecastAccuracySample]:
+    """Keep a recent in-memory history of forecast accuracy samples."""
+
+    cutoff = now - max_age
+    return [sample for sample in samples if sample.start >= cutoff]
 
 
 def build_interval_snapshot(plan: PlanInterval, start_soc_percent: float) -> IntervalSnapshot:

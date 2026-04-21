@@ -291,8 +291,20 @@ cards:
     entities:
       - entity: sensor.battery_optimizer_load_forecast
         name: Next forecast load
+      - entity: sensor.battery_optimizer_load_forecast_mae
+        name: Forecast MAE
+      - entity: sensor.battery_optimizer_load_forecast_bias
+        name: Forecast bias
       - entity: sensor.inverter_load_power
         name: Current load
+
+  - type: entities
+    title: Load Forecast Accuracy
+    entities:
+      - entity: sensor.battery_optimizer_load_forecast_mae
+        name: Recent MAE
+      - entity: sensor.battery_optimizer_load_forecast_bias
+        name: Recent bias
 
   - type: custom:apexcharts-card
     header:

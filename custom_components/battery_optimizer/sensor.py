@@ -181,6 +181,24 @@ SENSORS: tuple[BatteryOptimizerSensorDescription, ...] = (
         attrs_fn=lambda coordinator: _load_forecast_attrs(coordinator),
     ),
     BatteryOptimizerSensorDescription(
+        key="load_forecast_mae",
+        translation_key="load_forecast_mae",
+        native_unit_of_measurement="kW",
+        value_fn=lambda coordinator: coordinator.forecast_accuracy_recent.mean_absolute_error_kw
+        if coordinator.forecast_accuracy_recent.sample_count
+        else None,
+        attrs_fn=lambda coordinator: _forecast_accuracy_attrs(coordinator),
+    ),
+    BatteryOptimizerSensorDescription(
+        key="load_forecast_bias",
+        translation_key="load_forecast_bias",
+        native_unit_of_measurement="kW",
+        value_fn=lambda coordinator: coordinator.forecast_accuracy_recent.mean_error_kw
+        if coordinator.forecast_accuracy_recent.sample_count
+        else None,
+        attrs_fn=lambda coordinator: _forecast_accuracy_attrs(coordinator),
+    ),
+    BatteryOptimizerSensorDescription(
         key="cheapest_charge_windows",
         translation_key="cheapest_charge_windows",
         value_fn=lambda coordinator: len(coordinator.data.cheapest_charge_windows) if coordinator.data else None,
@@ -261,7 +279,7 @@ class BatteryOptimizerSensor(CoordinatorEntity[BatteryOptimizerCoordinator], Sen
             or self.entity_description.key.startswith("daily_")
             or self.entity_description.key.startswith("monthly_")
             or self.entity_description.key.startswith("price_")
-            or self.entity_description.key == "load_forecast"
+            or self.entity_description.key in {"load_forecast", "load_forecast_mae", "load_forecast_bias"}
             or self.entity_description.key in {"projected_soc_today", "projected_soc_tomorrow", "projected_soc_schedule"}
         ):
             return True
@@ -470,6 +488,44 @@ def _load_forecast_attrs(coordinator: BatteryOptimizerCoordinator) -> dict[str, 
             for point in coordinator.load_forecast[:48]
         ],
         "method": "Forecast first averages recorder history into one value per day and optimizer interval, then prefers weekday-interval history, then workday/weekend-holiday profile history, blends with a rolling recent trend when available, and falls back to current load if history is too thin.",
+    }
+
+
+def _forecast_accuracy_attrs(coordinator: BatteryOptimizerCoordinator) -> dict[str, Any]:
+    recent = coordinator.forecast_accuracy_recent
+    today = coordinator.forecast_accuracy_today
+    last_sample = coordinator._forecast_accuracy_samples[-1] if coordinator._forecast_accuracy_samples else None
+    return {
+        "recent": {
+            "sample_count": recent.sample_count,
+            "mean_error_kw": recent.mean_error_kw,
+            "mean_absolute_error_kw": recent.mean_absolute_error_kw,
+            "rmse_kw": recent.rmse_kw,
+            "mean_actual_load_kw": recent.mean_actual_load_kw,
+            "relative_mae_percent": recent.relative_mae_percent,
+            "last_forecast_load_kw": recent.last_forecast_load_kw,
+            "last_actual_load_kw": recent.last_actual_load_kw,
+            "last_error_kw": recent.last_error_kw,
+        },
+        "today": {
+            "sample_count": today.sample_count,
+            "mean_error_kw": today.mean_error_kw,
+            "mean_absolute_error_kw": today.mean_absolute_error_kw,
+            "rmse_kw": today.rmse_kw,
+            "mean_actual_load_kw": today.mean_actual_load_kw,
+            "relative_mae_percent": today.relative_mae_percent,
+            "last_forecast_load_kw": today.last_forecast_load_kw,
+            "last_actual_load_kw": today.last_actual_load_kw,
+            "last_error_kw": today.last_error_kw,
+        },
+        "adaptive_load_bias_kw": coordinator.adaptive_state.load_bias_kw,
+        "last_interval": {
+            "time": last_sample.start.isoformat() if last_sample else None,
+            "forecast_load_kw": last_sample.forecast_load_kw if last_sample else None,
+            "actual_load_kw": last_sample.actual_load_kw if last_sample else None,
+            "error_kw": last_sample.error_kw if last_sample else None,
+        },
+        "method": "Bias is actual load minus forecast load. MAE and RMSE are computed from completed intervals. The existing adaptive load-bias correction uses the same completed-interval error signal to nudge future forecasts.",
     }
 
 

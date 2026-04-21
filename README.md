@@ -120,6 +120,8 @@ Created entities include:
 - `sensor.battery_optimizer_price_today_comparison`
 - `sensor.battery_optimizer_price_tomorrow_comparison`
 - `sensor.battery_optimizer_load_forecast`
+- `sensor.battery_optimizer_load_forecast_mae`
+- `sensor.battery_optimizer_load_forecast_bias`
 - `sensor.battery_optimizer_upcoming_charge_hours`
 - `sensor.battery_optimizer_upcoming_discharge_hours`
 - `sensor.battery_optimizer_cheapest_charge_windows`
@@ -452,8 +454,20 @@ cards:
     entities:
       - entity: sensor.battery_optimizer_load_forecast
         name: Next forecast load
+      - entity: sensor.battery_optimizer_load_forecast_mae
+        name: Forecast MAE
+      - entity: sensor.battery_optimizer_load_forecast_bias
+        name: Forecast bias
       - entity: sensor.inverter_load_power
         name: Current load
+
+  - type: entities
+    title: Load Forecast Accuracy
+    entities:
+      - entity: sensor.battery_optimizer_load_forecast_mae
+        name: Recent MAE
+      - entity: sensor.battery_optimizer_load_forecast_bias
+        name: Recent bias
 
   - type: custom:apexcharts-card
     header:
@@ -567,6 +581,13 @@ Load forecasting uses recorder history by default. It now:
 5. falls back to current load when history is too thin
 
 The `sensor.battery_optimizer_load_forecast` attributes show the forecast source, sample count, workday/weekend-holiday profile, raw pattern value, recent-trend value, current-load fallback, and adaptive bias for each point. A dedicated `load_forecast_entity` can still be configured for external forecasts.
+
+The forecast-accuracy sensors compare completed intervals against the actual measured load:
+
+- `sensor.battery_optimizer_load_forecast_mae` shows recent mean absolute error in `kW`
+- `sensor.battery_optimizer_load_forecast_bias` shows recent signed bias in `kW` where positive means the house used more load than forecast
+
+Their attributes also expose today's summary, RMSE, relative MAE versus the recent average actual load, and the latest completed-interval forecast vs actual comparison. The adaptive load-bias correction uses this same interval error signal to nudge future forecasts.
 
 This is deliberately conservative. A future linear programming backend can be added behind the same `optimize()` input/output model.
 

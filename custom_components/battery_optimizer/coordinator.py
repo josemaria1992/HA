@@ -15,10 +15,15 @@ from homeassistant.util import dt as dt_util
 
 from .adaptive import (
     AdaptiveState,
+    ForecastAccuracySample,
+    ForecastAccuracySummary,
     IntervalSnapshot,
     apply_load_bias,
+    build_forecast_accuracy_sample,
     build_interval_snapshot,
     compute_command_targets,
+    summarize_forecast_accuracy,
+    trim_forecast_accuracy_samples,
     update_adaptive_state,
 )
 from .backend import CommandSnapshot, SolarmanBackend
@@ -88,6 +93,9 @@ class BatteryOptimizerCoordinator(DataUpdateCoordinator[OptimizationResult | Non
         self._last_input_constraints = None
         self.adaptive_state = AdaptiveState()
         self._last_interval_snapshot: IntervalSnapshot | None = None
+        self._forecast_accuracy_samples: list[ForecastAccuracySample] = []
+        self.forecast_accuracy_recent = ForecastAccuracySummary()
+        self.forecast_accuracy_today = ForecastAccuracySummary()
         self.last_command_target_soc: float | None = None
         self.last_command_target_power_kw: float | None = None
         self.planned_command_target_soc: float | None = None
@@ -536,6 +544,14 @@ class BatteryOptimizerCoordinator(DataUpdateCoordinator[OptimizationResult | Non
             return
         actual_soc = _read_number(self.hass, self.config.get(CONF_BATTERY_SOC_ENTITY))
         actual_load_kw = _read_kw(self.hass, self.config.get(CONF_LOAD_POWER_ENTITY))
+        accuracy_sample = build_forecast_accuracy_sample(self._last_interval_snapshot, actual_load_kw)
+        if accuracy_sample is not None:
+            self._forecast_accuracy_samples.append(accuracy_sample)
+            self._forecast_accuracy_samples = trim_forecast_accuracy_samples(
+                self._forecast_accuracy_samples,
+                dt_util.now(),
+            )
+        self._refresh_forecast_accuracy_summaries()
         self.adaptive_state = update_adaptive_state(
             self.adaptive_state,
             self._last_interval_snapshot,
@@ -645,6 +661,16 @@ class BatteryOptimizerCoordinator(DataUpdateCoordinator[OptimizationResult | Non
         self.last_applied_message = f"Reconciled active inverter mismatch: {command.message}"
         _LOGGER.warning("Battery optimizer reconciled mismatch: %s", "; ".join(issues))
         return self.last_applied_message
+
+    def _refresh_forecast_accuracy_summaries(self) -> None:
+        self.forecast_accuracy_recent = summarize_forecast_accuracy(self._forecast_accuracy_samples)
+        today = dt_util.now().date()
+        today_samples = [
+            sample
+            for sample in self._forecast_accuracy_samples
+            if dt_util.as_local(sample.start).date() == today
+        ]
+        self.forecast_accuracy_today = summarize_forecast_accuracy(today_samples)
 
 
 def get_coordinator(hass: HomeAssistant, entry: ConfigEntry) -> BatteryOptimizerCoordinator:
