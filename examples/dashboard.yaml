@@ -32,8 +32,8 @@ cards:
   - type: custom:apexcharts-card
     header:
       show: true
-      title: Nord Pool Raw vs Hourly Average
-    graph_span: 2d
+      title: Today - Price vs Projected SOC
+    graph_span: 1d
     span:
       start: day
     now:
@@ -42,6 +42,10 @@ cards:
     yaxis:
       - id: price
         decimals: 3
+      - id: soc
+        min: 0
+        max: 100
+        opposite: true
     apex_config:
       stroke:
         width: 2
@@ -66,6 +70,40 @@ cards:
           return entity.attributes.hourly_average.map((point) => {
             return [new Date(point.time).getTime(), point.price];
           });
+      - entity: sensor.battery_optimizer_price_today_comparison
+        name: Projected SOC
+        yaxis_id: soc
+        type: line
+        curve: stepline
+        data_generator: |
+          return entity.attributes.projected_soc.map((point) => {
+            return [new Date(point.time).getTime(), point.projected_soc_percent];
+          });
+
+  - type: custom:apexcharts-card
+    header:
+      show: true
+      title: Tomorrow - Price vs Projected SOC
+    graph_span: 1d
+    span:
+      start: day
+      offset: +1d
+    now:
+      show: true
+      label: Now
+    yaxis:
+      - id: price
+        decimals: 3
+      - id: soc
+        min: 0
+        max: 100
+        opposite: true
+    apex_config:
+      stroke:
+        width: 2
+      legend:
+        show: true
+    series:
       - entity: sensor.battery_optimizer_price_tomorrow_comparison
         name: Tomorrow raw Nord Pool
         yaxis_id: price
@@ -83,6 +121,15 @@ cards:
         data_generator: |
           return entity.attributes.hourly_average.map((point) => {
             return [new Date(point.time).getTime(), point.price];
+          });
+      - entity: sensor.battery_optimizer_price_tomorrow_comparison
+        name: Projected SOC
+        yaxis_id: soc
+        type: line
+        curve: stepline
+        data_generator: |
+          return entity.attributes.projected_soc.map((point) => {
+            return [new Date(point.time).getTime(), point.projected_soc_percent];
           });
 
   - type: entities

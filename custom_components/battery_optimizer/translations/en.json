@@ -66,6 +66,8 @@
       "planned_mode": { "name": "Planned mode" },
       "projected_soc": { "name": "Projected SOC" },
       "projected_soc_schedule": { "name": "Projected SOC schedule" },
+      "projected_soc_today": { "name": "Projected SOC today" },
+      "projected_soc_tomorrow": { "name": "Projected SOC tomorrow" },
       "expected_savings": { "name": "Expected value" },
       "cost_without_battery": { "name": "Cost without battery" },
       "cost_with_battery": { "name": "Cost with battery" },

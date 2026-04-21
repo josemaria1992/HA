@@ -26,6 +26,7 @@ from .const import (
     CONF_PHASE_PEAK_SHAVING_ENABLED,
     CONF_PHASE_VOLTAGE_ENTITIES,
     CONF_PROGRAM_SOC_NUMBERS,
+    DEFAULT_EMERGENCY_PHASE_CURRENT_A,
     DEFAULT_SOLARMAN_MAX_CHARGING_CURRENT_A,
     DEFAULT_SOLARMAN_MAX_DISCHARGING_CURRENT_A,
 )
@@ -70,6 +71,10 @@ class SolarmanBackend:
             if plan.mode is BatteryMode.CHARGE:
                 target_soc = self._charge_target_soc(plan, current_soc)
                 charge_current = self._charge_current_amps(plan.target_power_kw)
+                emergency_limited = self._emergency_charge_current_limit(charge_current)
+                if emergency_limited < charge_current:
+                    charge_current = emergency_limited
+                    command_bits.append("Charge current reduced because a phase current is in the emergency band.")
                 await self._set_program_soc_targets(target_soc)
                 await self._set_max_charge_current(DEFAULT_SOLARMAN_MAX_CHARGING_CURRENT_A)
                 await self._set_max_discharge_current(0.0)
@@ -274,6 +279,21 @@ class SolarmanBackend:
 
     def _hold_target_soc(self, current_soc: float) -> float:
         return round(current_soc)
+
+    def _emergency_charge_current_limit(self, requested_amps: float) -> float:
+        phase_currents = self._phase_currents()
+        if not phase_currents:
+            return requested_amps
+        max_phase_current = max(phase_currents)
+        if max_phase_current >= DEFAULT_EMERGENCY_PHASE_CURRENT_A:
+            return 0.0
+        if max_phase_current <= 20.0:
+            return requested_amps
+        headroom_ratio = max(
+            (DEFAULT_EMERGENCY_PHASE_CURRENT_A - max_phase_current) / (DEFAULT_EMERGENCY_PHASE_CURRENT_A - 20.0),
+            0.0,
+        )
+        return requested_amps * min(headroom_ratio, 1.0)
 
 
 def _read_number(hass: HomeAssistant, entity_id: str | None) -> float | None:

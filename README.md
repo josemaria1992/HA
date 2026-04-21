@@ -102,6 +102,8 @@ Created entities include:
 - `sensor.battery_optimizer_planned_mode`
 - `sensor.battery_optimizer_projected_soc`
 - `sensor.battery_optimizer_projected_soc_schedule`
+- `sensor.battery_optimizer_projected_soc_today`
+- `sensor.battery_optimizer_projected_soc_tomorrow`
 - `sensor.battery_optimizer_expected_value`
 - `sensor.battery_optimizer_cost_without_battery`
 - `sensor.battery_optimizer_cost_with_battery`
@@ -191,8 +193,8 @@ cards:
   - type: custom:apexcharts-card
     header:
       show: true
-      title: Nord Pool Raw vs Hourly Average
-    graph_span: 2d
+      title: Today - Price vs Projected SOC
+    graph_span: 1d
     span:
       start: day
     now:
@@ -201,6 +203,10 @@ cards:
     yaxis:
       - id: price
         decimals: 3
+      - id: soc
+        min: 0
+        max: 100
+        opposite: true
     apex_config:
       stroke:
         width: 2
@@ -225,6 +231,40 @@ cards:
           return entity.attributes.hourly_average.map((point) => {
             return [new Date(point.time).getTime(), point.price];
           });
+      - entity: sensor.battery_optimizer_price_today_comparison
+        name: Projected SOC
+        yaxis_id: soc
+        type: line
+        curve: stepline
+        data_generator: |
+          return entity.attributes.projected_soc.map((point) => {
+            return [new Date(point.time).getTime(), point.projected_soc_percent];
+          });
+
+  - type: custom:apexcharts-card
+    header:
+      show: true
+      title: Tomorrow - Price vs Projected SOC
+    graph_span: 1d
+    span:
+      start: day
+      offset: +1d
+    now:
+      show: true
+      label: Now
+    yaxis:
+      - id: price
+        decimals: 3
+      - id: soc
+        min: 0
+        max: 100
+        opposite: true
+    apex_config:
+      stroke:
+        width: 2
+      legend:
+        show: true
+    series:
       - entity: sensor.battery_optimizer_price_tomorrow_comparison
         name: Tomorrow raw Nord Pool
         yaxis_id: price
@@ -242,6 +282,15 @@ cards:
         data_generator: |
           return entity.attributes.hourly_average.map((point) => {
             return [new Date(point.time).getTime(), point.price];
+          });
+      - entity: sensor.battery_optimizer_price_tomorrow_comparison
+        name: Projected SOC
+        yaxis_id: soc
+        type: line
+        curve: stepline
+        data_generator: |
+          return entity.attributes.projected_soc.map((point) => {
+            return [new Date(point.time).getTime(), point.projected_soc_percent];
           });
 
   - type: entities
@@ -337,8 +386,9 @@ The optimizer uses dependency-free dynamic programming rather than a heavy MILP 
 8. Uses future stored-energy value to avoid wasting battery before better later peaks.
 9. Caps discharge by the load forecast so the plan avoids discharging beyond expected household consumption.
 10. Holds when the spread is not worth cycling the battery.
-11. Applies hysteresis and minimum dwell intervals to reduce charge/discharge oscillation.
-12. Explains the current decision in plain attributes.
+11. Recomputes often, but by default only writes inverter settings every 30 minutes unless a phase-current emergency needs an immediate update.
+12. Applies hysteresis and minimum dwell intervals to reduce charge/discharge oscillation.
+13. Explains the current decision in plain attributes.
 
 Load forecasting uses recorder history by default. It groups `sensor.inverter_load_power` by day-of-week and interval, trims outliers, and falls back to weekday-hour history or current load when there are not enough samples. A dedicated `load_forecast_entity` can still be configured for external forecasts.
 

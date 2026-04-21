@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from collections.abc import Callable
 from dataclasses import dataclass
+from datetime import timedelta
 from typing import Any
 
 from homeassistant.components.sensor import SensorEntity, SensorEntityDescription
@@ -46,6 +47,20 @@ SENSORS: tuple[BatteryOptimizerSensorDescription, ...] = (
         native_unit_of_measurement="%",
         value_fn=lambda coordinator: coordinator.data.projected_soc_percent if coordinator.data else None,
         attrs_fn=lambda coordinator: _projected_soc_schedule_attrs(coordinator),
+    ),
+    BatteryOptimizerSensorDescription(
+        key="projected_soc_today",
+        translation_key="projected_soc_today",
+        native_unit_of_measurement="%",
+        value_fn=lambda coordinator: _day_projected_soc_value(coordinator, "today"),
+        attrs_fn=lambda coordinator: _day_projected_soc_attrs(coordinator, "today"),
+    ),
+    BatteryOptimizerSensorDescription(
+        key="projected_soc_tomorrow",
+        translation_key="projected_soc_tomorrow",
+        native_unit_of_measurement="%",
+        value_fn=lambda coordinator: _day_projected_soc_value(coordinator, "tomorrow"),
+        attrs_fn=lambda coordinator: _day_projected_soc_attrs(coordinator, "tomorrow"),
     ),
     BatteryOptimizerSensorDescription(
         key="expected_savings",
@@ -400,6 +415,7 @@ def _price_comparison_attrs(coordinator: BatteryOptimizerCoordinator, day_key: s
         "source_interval_minutes": day.get("source_interval_minutes"),
         "quarter_hours": day.get("quarter_hours", []),
         "hourly_average": day.get("hourly_average", []),
+        "projected_soc": _projected_soc_points_for_day(coordinator, day_key),
         "note": "quarter_hours is the raw Nord Pool series; hourly_average is the supplier-billing average used by the optimizer.",
     }
 
@@ -424,3 +440,46 @@ def _load_forecast_attrs(coordinator: BatteryOptimizerCoordinator) -> dict[str, 
         ],
         "method": "Recorder history grouped by day-of-week and interval, with weekday-hour and current-load fallback.",
     }
+
+
+def _day_projected_soc_value(coordinator: BatteryOptimizerCoordinator, day_key: str) -> float | None:
+    points = _projected_soc_points_for_day(coordinator, day_key)
+    if not points:
+        return None
+    return points[0]["projected_soc_percent"]
+
+
+def _day_projected_soc_attrs(coordinator: BatteryOptimizerCoordinator, day_key: str) -> dict[str, Any]:
+    return {
+        "date": _target_day(coordinator, day_key).isoformat(),
+        "projected_soc": _projected_soc_points_for_day(coordinator, day_key),
+        "note": "Projected SOC is the expected SOC after each planned interval for the selected day.",
+    }
+
+
+def _projected_soc_points_for_day(coordinator: BatteryOptimizerCoordinator, day_key: str) -> list[dict[str, Any]]:
+    if not coordinator.data:
+        return []
+    target_day = _target_day(coordinator, day_key)
+    points: list[dict[str, Any]] = []
+    for interval in coordinator.data.intervals:
+        local_start = dt_util.as_local(interval.start)
+        if local_start.date() != target_day:
+            continue
+        points.append(
+            {
+                "time": local_start.isoformat(),
+                "projected_soc_percent": interval.projected_soc_percent,
+                "mode": interval.mode.value,
+                "target_power_kw": interval.target_power_kw,
+                "price": interval.price,
+            }
+        )
+    return points
+
+
+def _target_day(coordinator: BatteryOptimizerCoordinator, day_key: str):
+    base_day = dt_util.now().date()
+    if day_key == "tomorrow":
+        return base_day + timedelta(days=1)
+    return base_day
