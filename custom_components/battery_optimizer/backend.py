@@ -52,6 +52,9 @@ class CommandBackend(Protocol):
     async def hold(self, reason: str) -> CommandResult:
         """Put battery in a safe hold state."""
 
+    async def apply_current_only(self, plan: PlanInterval) -> CommandResult:
+        """Apply only fast current-related changes without rewriting SOC targets."""
+
 
 class SolarmanBackend:
     """Command backend for generic Solarman-controlled inverter entities."""
@@ -117,6 +120,40 @@ class SolarmanBackend:
         await self._set_max_discharge_current(0.0)
         await self._set_program_soc_targets(self._hold_target_soc(self._battery_soc()))
         return CommandResult(True, f"Hold applied: {reason}")
+
+    async def apply_current_only(self, plan: PlanInterval) -> CommandResult:
+        if self.config.get(CONF_ADVISORY_ONLY, True):
+            return CommandResult(False, f"Advisory-only mode: would fast-adjust {plan.mode.value}.")
+        try:
+            peak_message = await self._ensure_peak_shaving()
+            command_bits = [peak_message]
+            if plan.mode is BatteryMode.CHARGE:
+                charge_current = self._charge_current_amps(plan.target_power_kw)
+                emergency_limited = self._emergency_charge_current_limit(charge_current)
+                if emergency_limited < charge_current:
+                    charge_current = emergency_limited
+                    command_bits.append("Charge current reduced because a phase current is in the emergency band.")
+                await self._set_max_charge_current(DEFAULT_SOLARMAN_MAX_CHARGING_CURRENT_A)
+                await self._set_max_discharge_current(0.0)
+                await self._set_grid_charge_current(charge_current)
+                await self._set_grid_charging(True)
+                command_bits.append(f"Fast current-only charge adjustment to {charge_current:.1f}A.")
+            elif plan.mode is BatteryMode.DISCHARGE:
+                discharge_current = self._discharge_current_amps(plan.target_power_kw)
+                await self._set_grid_charging(False)
+                await self._set_grid_charge_current(0.0)
+                await self._set_max_charge_current(DEFAULT_SOLARMAN_MAX_CHARGING_CURRENT_A)
+                await self._set_max_discharge_current(discharge_current)
+                command_bits.append(f"Fast current-only discharge adjustment to {discharge_current:.1f}A.")
+            else:
+                await self._set_grid_charging(False)
+                await self._set_grid_charge_current(0.0)
+                await self._set_max_discharge_current(0.0)
+                command_bits.append("Fast current-only hold adjustment.")
+            return CommandResult(True, " ".join(bit for bit in command_bits if bit))
+        except Exception as err:  # noqa: BLE001
+            _LOGGER.exception("Failed to apply Solarman current-only command")
+            return CommandResult(False, f"Current-only command failed: {err}")
 
     async def _set_grid_charging(self, enabled: bool) -> None:
         entity_id = self.config.get(CONF_GRID_CHARGING_SWITCH)

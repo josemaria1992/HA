@@ -65,6 +65,7 @@ class BatteryOptimizerCoordinator(DataUpdateCoordinator[OptimizationResult | Non
         self._previous_mode: BatteryMode | None = None
         self._previous_mode_intervals = 0
         self._last_device_write: datetime | None = None
+        self._last_full_device_write: datetime | None = None
         self._last_write_signature: tuple[Any, ...] | None = None
         self.ingestor = DataIngestor(hass, self.config)
         self.backend = SolarmanBackend(hass, self.config)
@@ -121,7 +122,8 @@ class BatteryOptimizerCoordinator(DataUpdateCoordinator[OptimizationResult | Non
         if seed_input is None:
             status = seed_status
         if input_data is None:
-            await self.backend.hold("; ".join(status.reasons))
+            if not self.config.get(CONF_ADVISORY_ONLY, True):
+                await self._async_apply_result(None)
             _LOGGER.warning("Battery optimizer falling back to hold: %s", "; ".join(status.reasons))
             return OptimizationResult(
                 generated_at=dt_util.now(),
@@ -162,16 +164,24 @@ class BatteryOptimizerCoordinator(DataUpdateCoordinator[OptimizationResult | Non
                 return self.last_applied_message
             command = await self.backend.hold("No valid optimization plan.")
             self._last_device_write = dt_util.now()
+            self._last_full_device_write = self._last_device_write
             self._last_write_signature = ("hold", 0.0, 0.0)
         else:
-            should_apply, apply_reason = self._should_write_result(result)
-            if not should_apply:
+            apply_kind, apply_reason = self._should_write_result(result)
+            if apply_kind == "skip":
                 self.last_applied_message = apply_reason
                 _LOGGER.debug("Battery optimizer deferred inverter write: %s", apply_reason)
                 return apply_reason
-            command = await self.backend.apply(result.intervals[0])
+            if apply_kind == "current_only":
+                command = await self.backend.apply_current_only(result.intervals[0])
+            else:
+                command = await self.backend.apply(result.intervals[0])
             self._last_device_write = dt_util.now()
-            self._last_write_signature = _plan_signature(result.intervals[0])
+            if apply_kind == "current_only":
+                self._last_write_signature = self._last_write_signature or _plan_signature(result.intervals[0])
+            else:
+                self._last_full_device_write = self._last_device_write
+                self._last_write_signature = _plan_signature(result.intervals[0])
         self.last_applied_message = command.message
         _LOGGER.info("Battery optimizer command result: %s", command.message)
         return command.message
@@ -321,32 +331,29 @@ class BatteryOptimizerCoordinator(DataUpdateCoordinator[OptimizationResult | Non
         self.daily_energy_with_battery_kwh = today["energy_with_battery_kwh"]
         await self._async_store_daily_totals()
 
-    def _should_write_result(self, result: OptimizationResult) -> tuple[bool, str]:
+    def _should_write_result(self, result: OptimizationResult) -> tuple[str, str]:
         if not result.intervals:
-            return True, "No existing interval command to compare."
+            return "full", "No existing interval command to compare."
 
         now = dt_util.now()
         signature = _plan_signature(result.intervals[0])
         max_phase_current = _max_phase_current(self.hass, self.config.get(CONF_PHASE_CURRENT_ENTITIES) or [])
-        emergency_threshold = max(
-            float(self.config.get(CONF_PEAK_SHAVING_A, DEFAULT_EMERGENCY_PHASE_CURRENT_A)),
-            DEFAULT_EMERGENCY_PHASE_CURRENT_A,
-        )
+        emergency_threshold = float(DEFAULT_EMERGENCY_PHASE_CURRENT_A)
         if max_phase_current is not None and max_phase_current >= emergency_threshold:
-            return True, f"Immediate write because phase current reached {max_phase_current:.1f}A."
+            return "current_only", f"Immediate current-only update because phase current reached {max_phase_current:.1f}A."
 
-        if self._last_device_write is None:
-            return True, "Initial inverter write."
+        if self._last_full_device_write is None:
+            return "full", "Initial inverter write."
 
         if signature == self._last_write_signature:
-            return False, "Plan unchanged; preserving inverter settings to reduce writes."
+            return "skip", "Plan unchanged; preserving inverter settings to reduce writes."
 
         write_interval = timedelta(minutes=DEFAULT_COMMAND_WRITE_INTERVAL_MINUTES)
-        if now - self._last_device_write < write_interval:
-            next_write_at = self._last_device_write + write_interval
-            return False, f"Plan changed, but next regular inverter update is after {next_write_at.strftime('%H:%M')}."
+        if now - self._last_full_device_write < write_interval:
+            next_write_at = self._last_full_device_write + write_interval
+            return "skip", f"Plan changed, but next regular inverter update is after {next_write_at.strftime('%H:%M')}."
 
-        return True, "Regular 30-minute inverter update."
+        return "full", "Regular 30-minute inverter update."
 
 
 def get_coordinator(hass: HomeAssistant, entry: ConfigEntry) -> BatteryOptimizerCoordinator:
