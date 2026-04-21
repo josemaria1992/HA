@@ -84,6 +84,7 @@
       "price_today_comparison": { "name": "Price today comparison" },
       "price_tomorrow_comparison": { "name": "Price tomorrow comparison" },
       "load_forecast": { "name": "Load forecast" },
+      "current_load_kw": { "name": "Current load" },
       "load_forecast_mae": { "name": "Load forecast MAE" },
       "load_forecast_bias": { "name": "Load forecast bias" },
       "cheapest_charge_windows": { "name": "Cheapest charge windows" },

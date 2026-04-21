@@ -121,6 +121,7 @@ Created entities include:
 - `sensor.battery_optimizer_price_today_comparison`
 - `sensor.battery_optimizer_price_tomorrow_comparison`
 - `sensor.battery_optimizer_load_forecast`
+- `sensor.battery_optimizer_current_load_kw`
 - `sensor.battery_optimizer_load_forecast_mae`
 - `sensor.battery_optimizer_load_forecast_bias`
 - `sensor.battery_optimizer_upcoming_charge_hours`
@@ -461,12 +462,12 @@ cards:
     entities:
       - entity: sensor.battery_optimizer_load_forecast
         name: Next forecast load
+      - entity: sensor.battery_optimizer_current_load_kw
+        name: Current load
       - entity: sensor.battery_optimizer_load_forecast_mae
         name: Forecast MAE
       - entity: sensor.battery_optimizer_load_forecast_bias
         name: Forecast bias
-      - entity: sensor.inverter_load_power
-        name: Current load
 
   - type: entities
     title: Load Forecast Accuracy
@@ -495,12 +496,10 @@ cards:
       legend:
         show: true
     series:
-      - entity: sensor.inverter_load_power
+      - entity: sensor.battery_optimizer_current_load_kw
         name: Actual load (30 min avg)
         type: line
         curve: smooth
-        transform: |
-          return x > 50 ? x / 1000 : x;
         group_by:
           func: avg
           duration: 30min

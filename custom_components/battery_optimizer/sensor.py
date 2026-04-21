@@ -18,6 +18,7 @@ from .const import ATTR_PLAN, ATTR_REASONS, ATTR_WINDOWS, DOMAIN
 from .coordinator import BatteryOptimizerCoordinator, get_coordinator
 from .ingestion import build_price_comparison
 from .optimizer import BatteryMode
+from .power import power_value_to_kw
 
 
 @dataclass(frozen=True, kw_only=True)
@@ -181,6 +182,13 @@ SENSORS: tuple[BatteryOptimizerSensorDescription, ...] = (
         attrs_fn=lambda coordinator: _load_forecast_attrs(coordinator),
     ),
     BatteryOptimizerSensorDescription(
+        key="current_load_kw",
+        translation_key="current_load_kw",
+        native_unit_of_measurement="kW",
+        value_fn=lambda coordinator: _current_load_kw_value(coordinator),
+        attrs_fn=lambda coordinator: _current_load_kw_attrs(coordinator),
+    ),
+    BatteryOptimizerSensorDescription(
         key="load_forecast_mae",
         translation_key="load_forecast_mae",
         native_unit_of_measurement="kW",
@@ -279,7 +287,7 @@ class BatteryOptimizerSensor(CoordinatorEntity[BatteryOptimizerCoordinator], Sen
             or self.entity_description.key.startswith("daily_")
             or self.entity_description.key.startswith("monthly_")
             or self.entity_description.key.startswith("price_")
-            or self.entity_description.key in {"load_forecast", "load_forecast_mae", "load_forecast_bias"}
+            or self.entity_description.key in {"load_forecast", "current_load_kw", "load_forecast_mae", "load_forecast_bias"}
             or self.entity_description.key in {"projected_soc_today", "projected_soc_tomorrow", "projected_soc_schedule"}
         ):
             return True
@@ -488,6 +496,36 @@ def _load_forecast_attrs(coordinator: BatteryOptimizerCoordinator) -> dict[str, 
             for point in coordinator.load_forecast[:48]
         ],
         "method": "Forecast first averages recorder history into one value per day and optimizer interval, then prefers weekday-interval history, then workday/weekend-holiday profile history, blends with a rolling recent trend when available, and falls back to current load if history is too thin.",
+    }
+
+
+def _current_load_kw_value(coordinator: BatteryOptimizerCoordinator) -> float | None:
+    entity_id = coordinator.config.get("load_power_entity")
+    if not entity_id:
+        return None
+    state = coordinator.hass.states.get(entity_id)
+    if state is None or state.state in {"unknown", "unavailable", ""}:
+        return None
+    try:
+        value = float(state.state)
+    except ValueError:
+        return None
+    unit = getattr(state, "attributes", {}).get("unit_of_measurement")
+    return round(power_value_to_kw(value, str(unit) if unit is not None else None), 3)
+
+
+def _current_load_kw_attrs(coordinator: BatteryOptimizerCoordinator) -> dict[str, Any]:
+    entity_id = coordinator.config.get("load_power_entity")
+    if not entity_id:
+        return {}
+    state = coordinator.hass.states.get(entity_id)
+    if state is None:
+        return {"source_entity": entity_id}
+    return {
+        "source_entity": entity_id,
+        "source_state": state.state,
+        "source_unit_of_measurement": getattr(state, "attributes", {}).get("unit_of_measurement"),
+        "method": "Current load converted to kW using the source entity unit metadata when available.",
     }
 
 
