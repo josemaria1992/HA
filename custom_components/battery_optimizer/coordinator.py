@@ -294,14 +294,25 @@ class BatteryOptimizerCoordinator(DataUpdateCoordinator[OptimizationResult | Non
             if apply_kind == "current_only":
                 current_only_plan = self._current_only_plan(result.intervals[0])
                 current_only_power_kw = self._current_only_power_kw(current_only_plan, target_power_kw)
-                applied_plan = current_only_plan
+                if (
+                    self._is_control_window_locked()
+                    and self._applied_plan is not None
+                    and self._applied_snapshot is not None
+                    and self._applied_snapshot.mode is not BatteryMode.HOLD
+                ):
+                    applied_plan = self._applied_plan
+                    applied_target_soc = self.last_command_target_soc
+                    applied_target_power_kw = (
+                        current_only_power_kw
+                        if current_only_power_kw is not None
+                        else self.last_command_target_power_kw
+                    )
+                else:
+                    applied_plan = current_only_plan
                 if current_only_plan.mode is BatteryMode.HOLD:
                     applied_target_soc = None
                     applied_target_power_kw = 0.0
-                elif self._is_control_window_locked():
-                    applied_target_soc = self.last_command_target_soc
-                    applied_target_power_kw = current_only_power_kw
-                else:
+                elif applied_plan is current_only_plan:
                     applied_target_soc = target_soc
                     applied_target_power_kw = current_only_power_kw
                 command = await self.backend.apply_current_only(
@@ -655,7 +666,7 @@ class BatteryOptimizerCoordinator(DataUpdateCoordinator[OptimizationResult | Non
             target_power_kw=self.last_command_target_power_kw
             if self.last_command_target_power_kw is not None
             else self._applied_plan.target_power_kw,
-            projected_soc_percent=planned_interval.projected_soc_percent,
+            projected_soc_percent=self._applied_plan.projected_soc_percent,
             price=planned_interval.price,
             load_kw=planned_interval.load_kw,
             grid_import_without_battery_kwh=planned_interval.grid_import_without_battery_kwh,

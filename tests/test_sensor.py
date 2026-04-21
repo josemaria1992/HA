@@ -137,8 +137,8 @@ def _plan(mode: BatteryMode, projected_soc: float, target_power_kw: float) -> Pl
 def test_current_projected_soc_prefers_active_command_when_window_locked() -> None:
     applied_plan = _plan(BatteryMode.DISCHARGE, projected_soc=60.0, target_power_kw=2.5)
     coordinator = SimpleNamespace(
-        planned_command_target_soc=54.0,
-        last_command_target_soc=60.0,
+        planned_command_target_soc=50.0,
+        last_command_target_soc=50.0,
         planned_command_target_power_kw=1.8,
         last_command_target_power_kw=2.5,
         _applied_snapshot=SimpleNamespace(mode=BatteryMode.DISCHARGE),

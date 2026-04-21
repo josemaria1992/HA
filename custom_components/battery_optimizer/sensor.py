@@ -635,15 +635,13 @@ def _current_projected_soc_point(coordinator: BatteryOptimizerCoordinator) -> di
     active_window_locked = coordinator._is_control_window_locked()
 
     if active_window_locked and coordinator._applied_snapshot is not None and coordinator._applied_plan is not None:
-        active_target_soc = coordinator.last_command_target_soc
-        if active_target_soc is None:
-            active_target_soc = coordinator._applied_plan.projected_soc_percent
+        active_projected_soc = coordinator._applied_plan.projected_soc_percent
         active_target_power_kw = coordinator.last_command_target_power_kw
         if active_target_power_kw is None:
             active_target_power_kw = coordinator._applied_plan.target_power_kw
         return {
             "time": now.isoformat(),
-            "projected_soc_percent": _display_soc(active_target_soc),
+            "projected_soc_percent": _display_soc(active_projected_soc),
             "mode": coordinator._applied_snapshot.mode.value,
             "target_power_kw": active_target_power_kw,
             "price": coordinator._applied_plan.price,
