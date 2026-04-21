@@ -222,15 +222,15 @@ class BatteryOptimizerCoordinator(DataUpdateCoordinator[OptimizationResult | Non
             self._last_full_device_write = self._last_device_write
             self._last_write_signature = ("hold", 0.0, 0.0)
         else:
-            apply_kind, apply_reason = self._should_write_result(result)
-            if apply_kind == "skip":
-                self.last_applied_message = apply_reason
-                _LOGGER.debug("Battery optimizer deferred inverter write: %s", apply_reason)
-                return apply_reason
             command_targets = self._build_command_targets(result)
             if command_targets is not None:
                 self.last_command_target_soc = command_targets.target_soc_percent
                 self.last_command_target_power_kw = command_targets.target_power_kw
+            apply_kind, apply_reason = self._should_write_result(result, command_targets)
+            if apply_kind == "skip":
+                self.last_applied_message = apply_reason
+                _LOGGER.debug("Battery optimizer deferred inverter write: %s", apply_reason)
+                return apply_reason
             if apply_kind == "current_only":
                 command = await self.backend.apply_current_only(
                     result.intervals[0],
@@ -244,10 +244,18 @@ class BatteryOptimizerCoordinator(DataUpdateCoordinator[OptimizationResult | Non
                 )
             self._last_device_write = dt_util.now()
             if apply_kind == "current_only":
-                self._last_write_signature = self._last_write_signature or _plan_signature(result.intervals[0])
+                self._last_write_signature = self._last_write_signature or _command_signature(
+                    result.intervals[0],
+                    self.last_command_target_soc,
+                    self.last_command_target_power_kw,
+                )
             else:
                 self._last_full_device_write = self._last_device_write
-                self._last_write_signature = _plan_signature(result.intervals[0])
+                self._last_write_signature = _command_signature(
+                    result.intervals[0],
+                    self.last_command_target_soc,
+                    self.last_command_target_power_kw,
+                )
         self.last_applied_message = command.message
         _LOGGER.info("Battery optimizer command result: %s", command.message)
         return command.message
@@ -400,12 +408,16 @@ class BatteryOptimizerCoordinator(DataUpdateCoordinator[OptimizationResult | Non
         self.daily_energy_with_battery_kwh = today["energy_with_battery_kwh"]
         await self._async_store_daily_totals()
 
-    def _should_write_result(self, result: OptimizationResult) -> tuple[str, str]:
+    def _should_write_result(self, result: OptimizationResult, command_targets) -> tuple[str, str]:
         if not result.intervals:
             return "full", "No existing interval command to compare."
 
         now = dt_util.now()
-        signature = _plan_signature(result.intervals[0])
+        signature = _command_signature(
+            result.intervals[0],
+            command_targets.target_soc_percent if command_targets is not None else None,
+            command_targets.target_power_kw if command_targets is not None else None,
+        )
         max_phase_current = _max_phase_current(self.hass, self.config.get(CONF_PHASE_CURRENT_ENTITIES) or [])
         emergency_threshold = float(DEFAULT_EMERGENCY_PHASE_CURRENT_A)
         if max_phase_current is not None and max_phase_current >= emergency_threshold:
@@ -417,9 +429,10 @@ class BatteryOptimizerCoordinator(DataUpdateCoordinator[OptimizationResult | Non
         if signature == self._last_write_signature:
             return "skip", "Plan unchanged; preserving inverter settings to reduce writes."
 
-        write_interval = timedelta(minutes=DEFAULT_COMMAND_WRITE_INTERVAL_MINUTES)
-        if now - self._last_full_device_write < write_interval:
-            next_write_at = self._last_full_device_write + write_interval
+        current_window = _control_window_start(now, DEFAULT_COMMAND_WRITE_INTERVAL_MINUTES)
+        last_window = _control_window_start(self._last_full_device_write, DEFAULT_COMMAND_WRITE_INTERVAL_MINUTES)
+        if current_window <= last_window:
+            next_write_at = current_window + timedelta(minutes=DEFAULT_COMMAND_WRITE_INTERVAL_MINUTES)
             return "skip", f"Plan changed, but next regular inverter update is after {next_write_at.strftime('%H:%M')}."
 
         return "full", "Regular 30-minute inverter update."
@@ -626,11 +639,11 @@ def _add_cost_sample(totals: dict[str, float], baseline_kwh: float, actual_kwh: 
     totals["cost_with_battery"] += actual_kwh * price
 
 
-def _plan_signature(plan: PlanInterval) -> tuple[Any, ...]:
+def _command_signature(plan: PlanInterval, command_target_soc: float | None, command_power_kw: float | None) -> tuple[Any, ...]:
     return (
         plan.mode.value,
-        round(plan.target_power_kw, 2),
-        round(plan.projected_soc_percent, 0),
+        round(command_power_kw if command_power_kw is not None else plan.target_power_kw, 2),
+        round(command_target_soc if command_target_soc is not None else plan.projected_soc_percent, 1),
     )
 
 
@@ -640,3 +653,8 @@ def _max_phase_current(hass: HomeAssistant, entity_ids: list[str]) -> float | No
     if not values:
         return None
     return max(values)
+
+
+def _control_window_start(moment: datetime, interval_minutes: int) -> datetime:
+    bucket = (moment.minute // interval_minutes) * interval_minutes
+    return moment.replace(minute=bucket, second=0, microsecond=0)

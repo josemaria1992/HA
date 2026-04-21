@@ -39,7 +39,14 @@ SENSORS: tuple[BatteryOptimizerSensorDescription, ...] = (
         key="projected_soc",
         translation_key="projected_soc",
         native_unit_of_measurement="%",
-        value_fn=lambda coordinator: coordinator.data.projected_soc_percent if coordinator.data else None,
+        value_fn=lambda coordinator: coordinator.last_command_target_soc
+        if coordinator.last_command_target_soc is not None
+        else (coordinator.data.projected_soc_percent if coordinator.data else None),
+        attrs_fn=lambda coordinator: {
+            "command_target_soc_percent": coordinator.last_command_target_soc,
+            "command_target_power_kw": coordinator.last_command_target_power_kw,
+            "next_interval_projected_soc_percent": coordinator.data.projected_soc_percent if coordinator.data else None,
+        },
     ),
     BatteryOptimizerSensorDescription(
         key="projected_soc_schedule",
