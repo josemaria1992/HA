@@ -70,6 +70,7 @@ class BatteryOptimizerCoordinator(DataUpdateCoordinator[OptimizationResult | Non
         self.monthly_energy_without_battery_kwh = 0.0
         self.monthly_energy_with_battery_kwh = 0.0
         self.month_key = _month_key(dt_util.now().date())
+        self.cost_tracking_status = "Waiting for first runtime sample."
         self.load_forecast: list[ForecastPoint] = []
         self._last_daily_sample: datetime | None = None
         self._store = Store[dict[str, Any]](hass, STORE_VERSION, f"{DOMAIN}_{entry.entry_id}_daily")
@@ -369,19 +370,41 @@ class BatteryOptimizerCoordinator(DataUpdateCoordinator[OptimizationResult | Non
 
         if self._last_daily_sample is None:
             self._last_daily_sample = now
+            self.cost_tracking_status = "Waiting for the next runtime sample to start accumulating costs."
             await self._async_store_daily_totals()
             return
 
         elapsed_hours = max((now - self._last_daily_sample).total_seconds() / 3600, 0)
         self._last_daily_sample = now
         if elapsed_hours <= 0 or elapsed_hours > 0.25:
+            self.cost_tracking_status = "Skipped cost sample because the runtime interval was outside the valid sampling window."
             await self._async_store_daily_totals()
             return
 
         price = result.intervals[0].price if result.intervals else None
         load_kw = _read_kw(self.hass, self.config.get(CONF_LOAD_POWER_ENTITY))
+        load_source = "live load sensor"
+        if load_kw is None and result.intervals:
+            load_kw = max(result.intervals[0].load_kw, 0.0)
+            load_source = "optimizer load estimate"
         grid_kw = _read_total_grid_import_kw(self.hass, self.config.get(CONF_PHASE_POWER_ENTITIES) or [])
+        grid_source = "live phase power sensors"
+        if grid_kw is None and result.intervals and elapsed_hours > 0:
+            grid_kw = max(result.intervals[0].grid_import_with_battery_kwh / elapsed_hours, 0.0)
+            grid_source = "optimizer grid-import estimate"
         if price is None or load_kw is None or grid_kw is None:
+            missing_parts: list[str] = []
+            if price is None:
+                missing_parts.append("price")
+            if load_kw is None:
+                missing_parts.append("load")
+            if grid_kw is None:
+                missing_parts.append("grid import")
+            self.cost_tracking_status = (
+                "Cost tracking sample skipped because "
+                + ", ".join(missing_parts)
+                + " was unavailable."
+            )
             await self._async_store_daily_totals()
             return
 
@@ -400,6 +423,9 @@ class BatteryOptimizerCoordinator(DataUpdateCoordinator[OptimizationResult | Non
         self.monthly_cost_without_battery += baseline_cost
         self.monthly_cost_with_battery += actual_cost
         self.monthly_savings = self.monthly_cost_without_battery - self.monthly_cost_with_battery
+        self.cost_tracking_status = (
+            f"Accumulating costs from {load_source}, {grid_source}, and optimizer all-in price."
+        )
         await self._async_store_daily_totals()
 
     async def _async_store_daily_totals(self) -> None:
@@ -438,6 +464,7 @@ class BatteryOptimizerCoordinator(DataUpdateCoordinator[OptimizationResult | Non
             today_start,
         )
         if not estimates:
+            self.cost_tracking_status = "Recorder backfill unavailable; month totals will accumulate from runtime samples."
             return
         month = estimates["month"]
         today = estimates["today"]
@@ -451,6 +478,7 @@ class BatteryOptimizerCoordinator(DataUpdateCoordinator[OptimizationResult | Non
         self.daily_savings = today["cost_without_battery"] - today["cost_with_battery"]
         self.daily_energy_without_battery_kwh = today["energy_without_battery_kwh"]
         self.daily_energy_with_battery_kwh = today["energy_with_battery_kwh"]
+        self.cost_tracking_status = "Month and day totals were backfilled from recorder history."
         await self._async_store_daily_totals()
 
     def _should_write_result(self, result: OptimizationResult, command_targets) -> tuple[str, str]:

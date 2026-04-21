@@ -400,8 +400,9 @@ def _daily_attrs(coordinator: BatteryOptimizerCoordinator) -> dict[str, Any]:
         "daily_savings": round(coordinator.daily_savings, 4),
         "daily_energy_without_battery_kwh": round(coordinator.daily_energy_without_battery_kwh, 4),
         "daily_energy_with_battery_kwh": round(coordinator.daily_energy_with_battery_kwh, 4),
+        "tracking_status": coordinator.cost_tracking_status,
         "currency": "SEK",
-        "method": "Baseline uses live load power. Actual uses positive grid import from the three phase power sensors. Both are multiplied by the current hourly average price.",
+        "method": "Baseline prefers the live load sensor and falls back to the optimizer load estimate. Actual cost prefers positive grid import from the three phase power sensors and falls back to the optimizer grid-import estimate. Both use the optimizer all-in hourly price.",
     }
 
 
@@ -413,8 +414,9 @@ def _monthly_attrs(coordinator: BatteryOptimizerCoordinator) -> dict[str, Any]:
         "monthly_savings": round(coordinator.monthly_savings, 4),
         "monthly_energy_without_battery_kwh": round(coordinator.monthly_energy_without_battery_kwh, 4),
         "monthly_energy_with_battery_kwh": round(coordinator.monthly_energy_with_battery_kwh, 4),
+        "tracking_status": coordinator.cost_tracking_status,
         "currency": "SEK",
-        "method": "Month-to-date accumulator. Baseline uses live load power. Actual uses positive grid import from the three phase power sensors. Both are multiplied by spot price plus configured taxes and fees.",
+        "method": "Month-to-date accumulator. Baseline prefers the live load sensor and falls back to the optimizer load estimate. Actual cost prefers positive grid import from the three phase power sensors and falls back to the optimizer grid-import estimate. Both use the optimizer all-in price including configured taxes and fees.",
     }
 
 
