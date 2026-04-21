@@ -34,6 +34,7 @@ from .const import (
     DEFAULT_COMMAND_WRITE_INTERVAL_MINUTES,
     DEFAULT_EMERGENCY_PHASE_CURRENT_A,
     DEFAULT_GRID_FEE_PER_KWH,
+    DEFAULT_RECONCILE_RETRY_MINUTES,
     DEFAULT_SCAN_INTERVAL,
     DOMAIN,
     OVERRIDE_AUTO,
@@ -76,12 +77,15 @@ class BatteryOptimizerCoordinator(DataUpdateCoordinator[OptimizationResult | Non
         self._previous_mode_intervals = 0
         self._last_device_write: datetime | None = None
         self._last_full_device_write: datetime | None = None
+        self._last_reconcile_attempt: datetime | None = None
         self._last_write_signature: tuple[Any, ...] | None = None
         self._last_input_constraints = None
         self.adaptive_state = AdaptiveState()
         self._last_interval_snapshot: IntervalSnapshot | None = None
         self.last_command_target_soc: float | None = None
         self.last_command_target_power_kw: float | None = None
+        self.last_command_in_sync: bool | None = None
+        self.last_command_sync_issues: list[str] = []
         self.ingestor = DataIngestor(hass, self.config)
         self.backend = SolarmanBackend(hass, self.config)
         super().__init__(
@@ -228,6 +232,9 @@ class BatteryOptimizerCoordinator(DataUpdateCoordinator[OptimizationResult | Non
                 self.last_command_target_power_kw = command_targets.target_power_kw
             apply_kind, apply_reason = self._should_write_result(result, command_targets)
             if apply_kind == "skip":
+                reconcile_message = await self._async_reconcile_if_needed(result, command_targets, apply_reason)
+                if reconcile_message:
+                    return reconcile_message
                 self.last_applied_message = apply_reason
                 _LOGGER.debug("Battery optimizer deferred inverter write: %s", apply_reason)
                 return apply_reason
@@ -256,6 +263,8 @@ class BatteryOptimizerCoordinator(DataUpdateCoordinator[OptimizationResult | Non
                     self.last_command_target_soc,
                     self.last_command_target_power_kw,
                 )
+            self.last_command_in_sync = None
+            self.last_command_sync_issues = []
         self.last_applied_message = command.message
         _LOGGER.info("Battery optimizer command result: %s", command.message)
         return command.message
@@ -470,6 +479,47 @@ class BatteryOptimizerCoordinator(DataUpdateCoordinator[OptimizationResult | Non
             self.adaptive_state,
             DEFAULT_COMMAND_WRITE_INTERVAL_MINUTES,
         )
+
+    async def _async_reconcile_if_needed(self, result: OptimizationResult, command_targets, skipped_reason: str) -> str | None:
+        if not result.intervals or command_targets is None:
+            self.last_command_in_sync = None
+            self.last_command_sync_issues = []
+            return None
+
+        snapshot = self.backend.snapshot_for_plan(
+            result.intervals[0],
+            command_target_soc=command_targets.target_soc_percent,
+            command_power_kw=command_targets.target_power_kw,
+        )
+        in_sync, issues = self.backend.is_snapshot_applied(snapshot)
+        self.last_command_in_sync = in_sync
+        self.last_command_sync_issues = issues
+        if in_sync:
+            return None
+
+        now = dt_util.now()
+        retry_interval = timedelta(minutes=DEFAULT_RECONCILE_RETRY_MINUTES)
+        if self._last_reconcile_attempt is not None and now - self._last_reconcile_attempt < retry_interval:
+            self.last_applied_message = f"{skipped_reason} Reconcile pending: {issues[0]}"
+            return self.last_applied_message
+
+        self._last_reconcile_attempt = now
+        command = await self.backend.apply(
+            result.intervals[0],
+            command_target_soc=command_targets.target_soc_percent,
+            command_power_kw=command_targets.target_power_kw,
+        )
+        self._last_device_write = now
+        self._last_full_device_write = now
+        self._last_write_signature = _command_signature(
+            result.intervals[0],
+            command_targets.target_soc_percent,
+            command_targets.target_power_kw,
+        )
+        self.last_command_in_sync = None
+        self.last_applied_message = f"Reconciled inverter mismatch: {command.message}"
+        _LOGGER.warning("Battery optimizer reconciled mismatch: %s", "; ".join(issues))
+        return self.last_applied_message
 
 
 def get_coordinator(hass: HomeAssistant, entry: ConfigEntry) -> BatteryOptimizerCoordinator:

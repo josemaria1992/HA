@@ -275,6 +275,8 @@ def _plan_attrs(coordinator: BatteryOptimizerCoordinator) -> dict[str, Any]:
         ATTR_REASONS: coordinator.data.reasons,
         "command_target_soc_percent": coordinator.last_command_target_soc,
         "command_target_power_kw": coordinator.last_command_target_power_kw,
+        "command_in_sync": coordinator.last_command_in_sync,
+        "command_sync_issues": coordinator.last_command_sync_issues,
         "adaptive_state": {
             "load_bias_kw": coordinator.adaptive_state.load_bias_kw,
             "charge_response_factor": coordinator.adaptive_state.charge_response_factor,

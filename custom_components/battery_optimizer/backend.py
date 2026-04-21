@@ -43,6 +43,18 @@ class CommandResult:
     message: str
 
 
+@dataclass(frozen=True)
+class CommandSnapshot:
+    """Desired inverter-facing command state."""
+
+    mode: BatteryMode
+    target_soc_percent: float
+    grid_charging_enabled: bool
+    grid_charge_current_a: float
+    max_charge_current_a: float
+    max_discharge_current_a: float
+
+
 class CommandBackend(Protocol):
     """Interface every battery/inverter backend must implement."""
 
@@ -65,6 +77,18 @@ class CommandBackend(Protocol):
         command_power_kw: float | None = None,
     ) -> CommandResult:
         """Apply only fast current-related changes without rewriting SOC targets."""
+
+    def snapshot_for_plan(
+        self,
+        plan: PlanInterval,
+        *,
+        command_target_soc: float | None = None,
+        command_power_kw: float | None = None,
+    ) -> CommandSnapshot:
+        """Build the desired inverter-side state for a plan."""
+
+    def is_snapshot_applied(self, snapshot: CommandSnapshot) -> tuple[bool, list[str]]:
+        """Check whether the inverter entities match the desired state."""
 
 
 class SolarmanBackend:
@@ -365,6 +389,92 @@ class SolarmanBackend:
             0.0,
         )
         return requested_amps * min(headroom_ratio, 1.0)
+
+    def snapshot_for_plan(
+        self,
+        plan: PlanInterval,
+        *,
+        command_target_soc: float | None = None,
+        command_power_kw: float | None = None,
+    ) -> CommandSnapshot:
+        current_soc = self._battery_soc()
+        target_power_kw = command_power_kw if command_power_kw is not None else plan.target_power_kw
+        if plan.mode is BatteryMode.CHARGE:
+            target_soc = command_target_soc if command_target_soc is not None else self._charge_target_soc(plan, current_soc)
+            charge_current = self._emergency_charge_current_limit(self._charge_current_amps(target_power_kw))
+            return CommandSnapshot(
+                mode=BatteryMode.CHARGE,
+                target_soc_percent=round(target_soc, 1),
+                grid_charging_enabled=True,
+                grid_charge_current_a=round(charge_current, 1),
+                max_charge_current_a=DEFAULT_SOLARMAN_MAX_CHARGING_CURRENT_A,
+                max_discharge_current_a=0.0,
+            )
+        if plan.mode is BatteryMode.DISCHARGE:
+            target_soc = command_target_soc if command_target_soc is not None else self._discharge_target_soc(plan, current_soc)
+            discharge_current = self._discharge_current_amps(target_power_kw)
+            return CommandSnapshot(
+                mode=BatteryMode.DISCHARGE,
+                target_soc_percent=round(target_soc, 1),
+                grid_charging_enabled=False,
+                grid_charge_current_a=0.0,
+                max_charge_current_a=DEFAULT_SOLARMAN_MAX_CHARGING_CURRENT_A,
+                max_discharge_current_a=round(discharge_current, 1),
+            )
+        hold_soc = self._hold_target_soc(current_soc)
+        return CommandSnapshot(
+            mode=BatteryMode.HOLD,
+            target_soc_percent=round(hold_soc, 1),
+            grid_charging_enabled=False,
+            grid_charge_current_a=0.0,
+            max_charge_current_a=DEFAULT_SOLARMAN_MAX_CHARGING_CURRENT_A,
+            max_discharge_current_a=0.0,
+        )
+
+    def is_snapshot_applied(self, snapshot: CommandSnapshot) -> tuple[bool, list[str]]:
+        issues: list[str] = []
+
+        program_entities = self.config.get(CONF_PROGRAM_SOC_NUMBERS) or []
+        for entity_id in program_entities:
+            if not _number_matches(self.hass, entity_id, snapshot.target_soc_percent, tolerance=1.0):
+                issues.append(f"{entity_id} is not at target SOC {snapshot.target_soc_percent:.1f}%.")
+                break
+
+        grid_switch = self.config.get(CONF_GRID_CHARGING_SWITCH)
+        if grid_switch:
+            switch_state = self.hass.states.get(grid_switch)
+            expected = "on" if snapshot.grid_charging_enabled else "off"
+            if switch_state is None or switch_state.state != expected:
+                issues.append(f"{grid_switch} is not {expected}.")
+
+        grid_charge_number = self.config.get(CONF_GRID_CHARGING_CURRENT_NUMBER)
+        if grid_charge_number and not _number_matches(
+            self.hass,
+            grid_charge_number,
+            snapshot.grid_charge_current_a,
+            tolerance=1.0,
+        ):
+            issues.append(f"{grid_charge_number} does not match {snapshot.grid_charge_current_a:.1f}A.")
+
+        max_charge_number = self.config.get(CONF_MAX_CHARGING_CURRENT_NUMBER)
+        if max_charge_number and not _number_matches(
+            self.hass,
+            max_charge_number,
+            snapshot.max_charge_current_a,
+            tolerance=1.0,
+        ):
+            issues.append(f"{max_charge_number} does not match {snapshot.max_charge_current_a:.1f}A.")
+
+        max_discharge_number = self.config.get(CONF_MAX_DISCHARGING_CURRENT_NUMBER)
+        if max_discharge_number and not _number_matches(
+            self.hass,
+            max_discharge_number,
+            snapshot.max_discharge_current_a,
+            tolerance=1.0,
+        ):
+            issues.append(f"{max_discharge_number} does not match {snapshot.max_discharge_current_a:.1f}A.")
+
+        return (len(issues) == 0, issues)
 
 
 def _read_number(hass: HomeAssistant, entity_id: str | None) -> float | None:
