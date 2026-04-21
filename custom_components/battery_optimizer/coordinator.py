@@ -21,7 +21,7 @@ from .adaptive import (
     compute_command_targets,
     update_adaptive_state,
 )
-from .backend import SolarmanBackend
+from .backend import CommandSnapshot, SolarmanBackend
 from .const import (
     CONF_ADVISORY_ONLY,
     CONF_BATTERY_SOC_ENTITY,
@@ -84,8 +84,12 @@ class BatteryOptimizerCoordinator(DataUpdateCoordinator[OptimizationResult | Non
         self._last_interval_snapshot: IntervalSnapshot | None = None
         self.last_command_target_soc: float | None = None
         self.last_command_target_power_kw: float | None = None
+        self.planned_command_target_soc: float | None = None
+        self.planned_command_target_power_kw: float | None = None
         self.last_command_in_sync: bool | None = None
         self.last_command_sync_issues: list[str] = []
+        self._applied_snapshot: CommandSnapshot | None = None
+        self._applied_plan: PlanInterval | None = None
         self.ingestor = DataIngestor(hass, self.config)
         self.backend = SolarmanBackend(hass, self.config)
         super().__init__(
@@ -194,12 +198,14 @@ class BatteryOptimizerCoordinator(DataUpdateCoordinator[OptimizationResult | Non
             await self._async_apply_result(result)
         else:
             command_targets = self._build_command_targets(result)
-            self.last_command_target_soc = command_targets.target_soc_percent if command_targets else None
-            self.last_command_target_power_kw = command_targets.target_power_kw if command_targets else None
+            self.planned_command_target_soc = command_targets.target_soc_percent if command_targets else None
+            self.planned_command_target_power_kw = command_targets.target_power_kw if command_targets else None
+            self.last_command_in_sync = None
+            self.last_command_sync_issues = []
             self.last_applied_message = (
                 f"Advisory-only mode: planned {result.current_mode.value}, "
-                f"target {self.last_command_target_power_kw or 0:.2f}kW, "
-                f"SOC target {self.last_command_target_soc or 0:.1f}%."
+                f"target {self.planned_command_target_power_kw or 0:.2f}kW, "
+                f"SOC target {self.planned_command_target_soc or 0:.1f}%."
                 if result.intervals
                 else "Advisory-only mode: no valid interval to apply."
             )
@@ -214,6 +220,14 @@ class BatteryOptimizerCoordinator(DataUpdateCoordinator[OptimizationResult | Non
         """Apply an optimization result without forcing another refresh."""
 
         if not result or not result.valid or not result.intervals:
+            self.planned_command_target_soc = None
+            self.planned_command_target_power_kw = 0.0
+            self.last_command_target_soc = None
+            self.last_command_target_power_kw = 0.0
+            self.last_command_in_sync = None
+            self.last_command_sync_issues = []
+            self._applied_snapshot = None
+            self._applied_plan = None
             if (
                 self._last_device_write is not None
                 and dt_util.now() - self._last_device_write < timedelta(minutes=DEFAULT_COMMAND_WRITE_INTERVAL_MINUTES)
@@ -227,12 +241,13 @@ class BatteryOptimizerCoordinator(DataUpdateCoordinator[OptimizationResult | Non
             self._last_write_signature = ("hold", 0.0, 0.0)
         else:
             command_targets = self._build_command_targets(result)
-            if command_targets is not None:
-                self.last_command_target_soc = command_targets.target_soc_percent
-                self.last_command_target_power_kw = command_targets.target_power_kw
+            target_soc = command_targets.target_soc_percent if command_targets is not None else None
+            target_power_kw = command_targets.target_power_kw if command_targets is not None else None
+            self.planned_command_target_soc = target_soc
+            self.planned_command_target_power_kw = target_power_kw
             apply_kind, apply_reason = self._should_write_result(result, command_targets)
             if apply_kind == "skip":
-                reconcile_message = await self._async_reconcile_if_needed(result, command_targets, apply_reason)
+                reconcile_message = await self._async_reconcile_if_needed(apply_reason)
                 if reconcile_message:
                     return reconcile_message
                 self.last_applied_message = apply_reason
@@ -241,29 +256,46 @@ class BatteryOptimizerCoordinator(DataUpdateCoordinator[OptimizationResult | Non
             if apply_kind == "current_only":
                 command = await self.backend.apply_current_only(
                     result.intervals[0],
-                    command_power_kw=self.last_command_target_power_kw,
+                    command_power_kw=target_power_kw,
                 )
             else:
                 command = await self.backend.apply(
                     result.intervals[0],
-                    command_target_soc=self.last_command_target_soc,
-                    command_power_kw=self.last_command_target_power_kw,
+                    command_target_soc=target_soc,
+                    command_power_kw=target_power_kw,
                 )
-            self._last_device_write = dt_util.now()
+            now = dt_util.now()
+            self._last_device_write = now
+            self._applied_plan = result.intervals[0]
+            self._applied_snapshot = self.backend.snapshot_for_plan(
+                result.intervals[0],
+                command_target_soc=target_soc,
+                command_power_kw=target_power_kw,
+            )
+            if self._applied_snapshot.mode is BatteryMode.HOLD:
+                self.last_command_target_soc = None
+                self.last_command_target_power_kw = 0.0
+            else:
+                self.last_command_target_soc = self._applied_snapshot.target_soc_percent
+                self.last_command_target_power_kw = round(
+                    target_power_kw if target_power_kw is not None else result.intervals[0].target_power_kw,
+                    3,
+                )
             if apply_kind == "current_only":
                 self._last_write_signature = self._last_write_signature or _command_signature(
                     result.intervals[0],
-                    self.last_command_target_soc,
-                    self.last_command_target_power_kw,
+                    target_soc,
+                    target_power_kw,
                 )
             else:
                 self._last_full_device_write = self._last_device_write
                 self._last_write_signature = _command_signature(
                     result.intervals[0],
-                    self.last_command_target_soc,
-                    self.last_command_target_power_kw,
+                    target_soc,
+                    target_power_kw,
                 )
-            self.last_command_in_sync = None
+            self._last_reconcile_attempt = None
+            self.last_command_in_sync = True
             self.last_command_sync_issues = []
         self.last_applied_message = command.message
         _LOGGER.info("Battery optimizer command result: %s", command.message)
@@ -480,18 +512,13 @@ class BatteryOptimizerCoordinator(DataUpdateCoordinator[OptimizationResult | Non
             DEFAULT_COMMAND_WRITE_INTERVAL_MINUTES,
         )
 
-    async def _async_reconcile_if_needed(self, result: OptimizationResult, command_targets, skipped_reason: str) -> str | None:
-        if not result.intervals or command_targets is None:
+    async def _async_reconcile_if_needed(self, skipped_reason: str) -> str | None:
+        if self._applied_snapshot is None or self._applied_plan is None:
             self.last_command_in_sync = None
             self.last_command_sync_issues = []
             return None
 
-        snapshot = self.backend.snapshot_for_plan(
-            result.intervals[0],
-            command_target_soc=command_targets.target_soc_percent,
-            command_power_kw=command_targets.target_power_kw,
-        )
-        in_sync, issues = self.backend.is_snapshot_applied(snapshot)
+        in_sync, issues = self.backend.is_snapshot_applied(self._applied_snapshot)
         self.last_command_in_sync = in_sync
         self.last_command_sync_issues = issues
         if in_sync:
@@ -504,20 +531,25 @@ class BatteryOptimizerCoordinator(DataUpdateCoordinator[OptimizationResult | Non
             return self.last_applied_message
 
         self._last_reconcile_attempt = now
+        command_target_soc = None if self._applied_snapshot.mode is BatteryMode.HOLD else self._applied_snapshot.target_soc_percent
+        command_power_kw = 0.0 if self._applied_snapshot.mode is BatteryMode.HOLD else (
+            self.last_command_target_power_kw if self.last_command_target_power_kw is not None else self._applied_plan.target_power_kw
+        )
         command = await self.backend.apply(
-            result.intervals[0],
-            command_target_soc=command_targets.target_soc_percent,
-            command_power_kw=command_targets.target_power_kw,
+            self._applied_plan,
+            command_target_soc=command_target_soc,
+            command_power_kw=command_power_kw,
         )
         self._last_device_write = now
         self._last_full_device_write = now
         self._last_write_signature = _command_signature(
-            result.intervals[0],
-            command_targets.target_soc_percent,
-            command_targets.target_power_kw,
+            self._applied_plan,
+            command_target_soc,
+            command_power_kw,
         )
-        self.last_command_in_sync = None
-        self.last_applied_message = f"Reconciled inverter mismatch: {command.message}"
+        self.last_command_in_sync = True
+        self.last_command_sync_issues = []
+        self.last_applied_message = f"Reconciled active inverter mismatch: {command.message}"
         _LOGGER.warning("Battery optimizer reconciled mismatch: %s", "; ".join(issues))
         return self.last_applied_message
 
@@ -690,10 +722,16 @@ def _add_cost_sample(totals: dict[str, float], baseline_kwh: float, actual_kwh: 
 
 
 def _command_signature(plan: PlanInterval, command_target_soc: float | None, command_power_kw: float | None) -> tuple[Any, ...]:
+    target_power_kw = 0.0 if plan.mode is BatteryMode.HOLD else (
+        command_power_kw if command_power_kw is not None else plan.target_power_kw
+    )
+    target_soc_percent = 0.0 if plan.mode is BatteryMode.HOLD else (
+        command_target_soc if command_target_soc is not None else plan.projected_soc_percent
+    )
     return (
         plan.mode.value,
-        round(command_power_kw if command_power_kw is not None else plan.target_power_kw, 2),
-        round(command_target_soc if command_target_soc is not None else plan.projected_soc_percent, 1),
+        round(target_power_kw, 2),
+        round(target_soc_percent, 1),
     )
 
 

@@ -41,10 +41,16 @@ SENSORS: tuple[BatteryOptimizerSensorDescription, ...] = (
         native_unit_of_measurement="%",
         value_fn=lambda coordinator: coordinator.last_command_target_soc
         if coordinator.last_command_target_soc is not None
-        else (coordinator.data.projected_soc_percent if coordinator.data else None),
+        else (
+            coordinator.planned_command_target_soc
+            if coordinator.planned_command_target_soc is not None
+            else (coordinator.data.projected_soc_percent if coordinator.data else None)
+        ),
         attrs_fn=lambda coordinator: {
             "command_target_soc_percent": coordinator.last_command_target_soc,
             "command_target_power_kw": coordinator.last_command_target_power_kw,
+            "planned_command_target_soc_percent": coordinator.planned_command_target_soc,
+            "planned_command_target_power_kw": coordinator.planned_command_target_power_kw,
             "next_interval_projected_soc_percent": coordinator.data.projected_soc_percent if coordinator.data else None,
         },
     ),
@@ -275,6 +281,8 @@ def _plan_attrs(coordinator: BatteryOptimizerCoordinator) -> dict[str, Any]:
         ATTR_REASONS: coordinator.data.reasons,
         "command_target_soc_percent": coordinator.last_command_target_soc,
         "command_target_power_kw": coordinator.last_command_target_power_kw,
+        "planned_command_target_soc_percent": coordinator.planned_command_target_soc,
+        "planned_command_target_power_kw": coordinator.planned_command_target_power_kw,
         "command_in_sync": coordinator.last_command_in_sync,
         "command_sync_issues": coordinator.last_command_sync_issues,
         "adaptive_state": {

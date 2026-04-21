@@ -142,10 +142,8 @@ class SolarmanBackend:
                 await self._set_grid_charging(False)
                 await self._set_grid_charge_current(0.0)
                 await self._set_max_discharge_current(0.0)
-                hold_soc = self._hold_target_soc(current_soc)
-                await self._set_program_soc_targets(hold_soc)
                 command_bits.append(
-                    f"Hold target SOC {hold_soc:.0f}%, grid charge current 0A, discharge limit 0A."
+                    "Hold command keeps current program SOC windows, grid charge current 0A, discharge limit 0A."
                 )
             return CommandResult(True, f"Applied {plan.mode.value} command. {' '.join(bit for bit in command_bits if bit)}")
         except Exception as err:  # noqa: BLE001 - backend must fail safe
@@ -159,7 +157,6 @@ class SolarmanBackend:
         await self._set_grid_charging(False)
         await self._set_grid_charge_current(0.0)
         await self._set_max_discharge_current(0.0)
-        await self._set_program_soc_targets(self._hold_target_soc(self._battery_soc()))
         return CommandResult(True, f"Hold applied: {reason}")
 
     async def apply_current_only(
@@ -434,11 +431,12 @@ class SolarmanBackend:
     def is_snapshot_applied(self, snapshot: CommandSnapshot) -> tuple[bool, list[str]]:
         issues: list[str] = []
 
-        program_entities = self.config.get(CONF_PROGRAM_SOC_NUMBERS) or []
-        for entity_id in program_entities:
-            if not _number_matches(self.hass, entity_id, snapshot.target_soc_percent, tolerance=1.0):
-                issues.append(f"{entity_id} is not at target SOC {snapshot.target_soc_percent:.1f}%.")
-                break
+        if snapshot.mode is not BatteryMode.HOLD:
+            program_entities = self.config.get(CONF_PROGRAM_SOC_NUMBERS) or []
+            for entity_id in program_entities:
+                if not _number_matches(self.hass, entity_id, snapshot.target_soc_percent, tolerance=1.0):
+                    issues.append(f"{entity_id} is not at target SOC {snapshot.target_soc_percent:.1f}%.")
+                    break
 
         grid_switch = self.config.get(CONF_GRID_CHARGING_SWITCH)
         if grid_switch:
