@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from dataclasses import replace
 from datetime import date, datetime, timedelta
 import logging
 from typing import Any
@@ -12,9 +13,18 @@ from homeassistant.helpers.storage import Store
 from homeassistant.helpers.update_coordinator import DataUpdateCoordinator
 from homeassistant.util import dt as dt_util
 
+from .adaptive import (
+    AdaptiveState,
+    IntervalSnapshot,
+    apply_load_bias,
+    build_interval_snapshot,
+    compute_command_targets,
+    update_adaptive_state,
+)
 from .backend import SolarmanBackend
 from .const import (
     CONF_ADVISORY_ONLY,
+    CONF_BATTERY_SOC_ENTITY,
     CONF_GRID_FEE_PER_KWH,
     CONF_LOAD_POWER_ENTITY,
     CONF_PEAK_SHAVING_A,
@@ -67,6 +77,11 @@ class BatteryOptimizerCoordinator(DataUpdateCoordinator[OptimizationResult | Non
         self._last_device_write: datetime | None = None
         self._last_full_device_write: datetime | None = None
         self._last_write_signature: tuple[Any, ...] | None = None
+        self._last_input_constraints = None
+        self.adaptive_state = AdaptiveState()
+        self._last_interval_snapshot: IntervalSnapshot | None = None
+        self.last_command_target_soc: float | None = None
+        self.last_command_target_power_kw: float | None = None
         self.ingestor = DataIngestor(hass, self.config)
         self.backend = SolarmanBackend(hass, self.config)
         super().__init__(
@@ -97,6 +112,11 @@ class BatteryOptimizerCoordinator(DataUpdateCoordinator[OptimizationResult | Non
             self.monthly_savings = float(stored.get("monthly_savings", 0))
             self.monthly_energy_without_battery_kwh = float(stored.get("monthly_energy_without_battery_kwh", 0))
             self.monthly_energy_with_battery_kwh = float(stored.get("monthly_energy_with_battery_kwh", 0))
+        self.adaptive_state = AdaptiveState(
+            load_bias_kw=float(stored.get("adaptive_load_bias_kw", 0.0)),
+            charge_response_factor=float(stored.get("adaptive_charge_response_factor", 1.0)),
+            discharge_response_factor=float(stored.get("adaptive_discharge_response_factor", 1.0)),
+        )
         if self.monthly_cost_with_battery == 0 and self.monthly_energy_with_battery_kwh == 0:
             await self._async_backfill_cost_totals()
 
@@ -139,17 +159,43 @@ class BatteryOptimizerCoordinator(DataUpdateCoordinator[OptimizationResult | Non
                 valid=False,
                 error="Missing or stale data",
             )
+        self._update_adaptive_state_if_interval_advanced(input_data.prices[0].start if input_data.prices else None)
+        input_data = replace(
+            input_data,
+            load_forecast=apply_load_bias(input_data.load_forecast, self.adaptive_state.load_bias_kw),
+        )
+        self.load_forecast = [
+            ForecastPoint(
+                start=point.start,
+                load_kw=point.load_kw,
+                source="adaptive_history_bias" if abs(self.adaptive_state.load_bias_kw) >= 0.01 else "history",
+                samples=0,
+            )
+            for point in input_data.load_forecast
+        ]
+        self._last_input_constraints = input_data.constraints
         result = optimize(input_data)
+        result.reasons.append(
+            "Adaptive state: "
+            f"load bias {self.adaptive_state.load_bias_kw:+.2f}kW, "
+            f"charge response {self.adaptive_state.charge_response_factor:.2f}, "
+            f"discharge response {self.adaptive_state.discharge_response_factor:.2f}."
+        )
         result = self._apply_override(result)
         await self._async_update_daily_totals(result)
         self._track_mode(result.current_mode)
+        self._remember_interval_snapshot(result, input_data.constraints.soc_percent)
         _LOGGER.info("Battery optimizer decision: %s; reasons=%s", result.current_mode.value, result.reasons)
         if not self.config.get(CONF_ADVISORY_ONLY, True):
             await self._async_apply_result(result)
         else:
+            command_targets = self._build_command_targets(result)
+            self.last_command_target_soc = command_targets.target_soc_percent if command_targets else None
+            self.last_command_target_power_kw = command_targets.target_power_kw if command_targets else None
             self.last_applied_message = (
                 f"Advisory-only mode: planned {result.current_mode.value}, "
-                f"target {result.intervals[0].target_power_kw:.2f}kW."
+                f"target {self.last_command_target_power_kw or 0:.2f}kW, "
+                f"SOC target {self.last_command_target_soc or 0:.1f}%."
                 if result.intervals
                 else "Advisory-only mode: no valid interval to apply."
             )
@@ -181,10 +227,21 @@ class BatteryOptimizerCoordinator(DataUpdateCoordinator[OptimizationResult | Non
                 self.last_applied_message = apply_reason
                 _LOGGER.debug("Battery optimizer deferred inverter write: %s", apply_reason)
                 return apply_reason
+            command_targets = self._build_command_targets(result)
+            if command_targets is not None:
+                self.last_command_target_soc = command_targets.target_soc_percent
+                self.last_command_target_power_kw = command_targets.target_power_kw
             if apply_kind == "current_only":
-                command = await self.backend.apply_current_only(result.intervals[0])
+                command = await self.backend.apply_current_only(
+                    result.intervals[0],
+                    command_power_kw=self.last_command_target_power_kw,
+                )
             else:
-                command = await self.backend.apply(result.intervals[0])
+                command = await self.backend.apply(
+                    result.intervals[0],
+                    command_target_soc=self.last_command_target_soc,
+                    command_power_kw=self.last_command_target_power_kw,
+                )
             self._last_device_write = dt_util.now()
             if apply_kind == "current_only":
                 self._last_write_signature = self._last_write_signature or _plan_signature(result.intervals[0])
@@ -307,6 +364,9 @@ class BatteryOptimizerCoordinator(DataUpdateCoordinator[OptimizationResult | Non
                 "monthly_savings": round(self.monthly_savings, 4),
                 "monthly_energy_without_battery_kwh": round(self.monthly_energy_without_battery_kwh, 4),
                 "monthly_energy_with_battery_kwh": round(self.monthly_energy_with_battery_kwh, 4),
+                "adaptive_load_bias_kw": round(self.adaptive_state.load_bias_kw, 4),
+                "adaptive_charge_response_factor": round(self.adaptive_state.charge_response_factor, 4),
+                "adaptive_discharge_response_factor": round(self.adaptive_state.discharge_response_factor, 4),
             }
         )
 
@@ -363,6 +423,40 @@ class BatteryOptimizerCoordinator(DataUpdateCoordinator[OptimizationResult | Non
             return "skip", f"Plan changed, but next regular inverter update is after {next_write_at.strftime('%H:%M')}."
 
         return "full", "Regular 30-minute inverter update."
+
+    def _update_adaptive_state_if_interval_advanced(self, current_interval_start: datetime | None) -> None:
+        if current_interval_start is None or self._last_interval_snapshot is None:
+            return
+        if current_interval_start == self._last_interval_snapshot.start:
+            return
+        actual_soc = _read_number(self.hass, self.config.get(CONF_BATTERY_SOC_ENTITY))
+        actual_load_kw = _read_kw(self.hass, self.config.get(CONF_LOAD_POWER_ENTITY))
+        self.adaptive_state = update_adaptive_state(
+            self.adaptive_state,
+            self._last_interval_snapshot,
+            actual_soc,
+            actual_load_kw,
+        )
+
+    def _remember_interval_snapshot(self, result: OptimizationResult, start_soc_percent: float) -> None:
+        if not result.intervals:
+            self._last_interval_snapshot = None
+            return
+        self._last_interval_snapshot = build_interval_snapshot(result.intervals[0], start_soc_percent)
+
+    def _build_command_targets(self, result: OptimizationResult):
+        if not result.intervals or self._last_input_constraints is None:
+            return None
+        current_soc = _read_number(self.hass, self.config.get(CONF_BATTERY_SOC_ENTITY))
+        if current_soc is None:
+            current_soc = result.intervals[0].projected_soc_percent
+        return compute_command_targets(
+            result.intervals,
+            self._last_input_constraints,
+            current_soc,
+            self.adaptive_state,
+            DEFAULT_COMMAND_WRITE_INTERVAL_MINUTES,
+        )
 
 
 def get_coordinator(hass: HomeAssistant, entry: ConfigEntry) -> BatteryOptimizerCoordinator:

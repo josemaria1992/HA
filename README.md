@@ -168,6 +168,10 @@ cards:
         name: Current SOC
       - entity: sensor.battery_optimizer_projected_soc
         name: Projected SOC next hour
+      - entity: sensor.battery_optimizer_projected_soc_today
+        name: Projected SOC today
+      - entity: sensor.battery_optimizer_projected_soc_tomorrow
+        name: Projected SOC tomorrow
       - entity: sensor.battery_optimizer_projected_soc_schedule
         name: Projected SOC schedule
       - entity: sensor.battery_optimizer_planned_mode

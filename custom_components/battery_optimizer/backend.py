@@ -46,13 +46,24 @@ class CommandResult:
 class CommandBackend(Protocol):
     """Interface every battery/inverter backend must implement."""
 
-    async def apply(self, plan: PlanInterval) -> CommandResult:
+    async def apply(
+        self,
+        plan: PlanInterval,
+        *,
+        command_target_soc: float | None = None,
+        command_power_kw: float | None = None,
+    ) -> CommandResult:
         """Apply the current planned interval."""
 
     async def hold(self, reason: str) -> CommandResult:
         """Put battery in a safe hold state."""
 
-    async def apply_current_only(self, plan: PlanInterval) -> CommandResult:
+    async def apply_current_only(
+        self,
+        plan: PlanInterval,
+        *,
+        command_power_kw: float | None = None,
+    ) -> CommandResult:
         """Apply only fast current-related changes without rewriting SOC targets."""
 
 
@@ -64,7 +75,13 @@ class SolarmanBackend:
         self.config = config
         self._phase_peak_active = False
 
-    async def apply(self, plan: PlanInterval) -> CommandResult:
+    async def apply(
+        self,
+        plan: PlanInterval,
+        *,
+        command_target_soc: float | None = None,
+        command_power_kw: float | None = None,
+    ) -> CommandResult:
         if self.config.get(CONF_ADVISORY_ONLY, True):
             return CommandResult(False, f"Advisory-only mode: would set {plan.mode.value}.")
         try:
@@ -72,8 +89,8 @@ class SolarmanBackend:
             current_soc = self._battery_soc()
             command_bits = [peak_message]
             if plan.mode is BatteryMode.CHARGE:
-                target_soc = self._charge_target_soc(plan, current_soc)
-                charge_current = self._charge_current_amps(plan.target_power_kw)
+                target_soc = command_target_soc if command_target_soc is not None else self._charge_target_soc(plan, current_soc)
+                charge_current = self._charge_current_amps(command_power_kw if command_power_kw is not None else plan.target_power_kw)
                 emergency_limited = self._emergency_charge_current_limit(charge_current)
                 if emergency_limited < charge_current:
                     charge_current = emergency_limited
@@ -87,8 +104,8 @@ class SolarmanBackend:
                     f"Charge target SOC {target_soc:.0f}%, grid charge current {charge_current:.1f}A, discharge limit 0A."
                 )
             elif plan.mode is BatteryMode.DISCHARGE:
-                target_soc = self._discharge_target_soc(plan, current_soc)
-                discharge_current = self._discharge_current_amps(plan.target_power_kw)
+                target_soc = command_target_soc if command_target_soc is not None else self._discharge_target_soc(plan, current_soc)
+                discharge_current = self._discharge_current_amps(command_power_kw if command_power_kw is not None else plan.target_power_kw)
                 await self._set_program_soc_targets(target_soc)
                 await self._set_grid_charging(False)
                 await self._set_grid_charge_current(0.0)
@@ -121,14 +138,19 @@ class SolarmanBackend:
         await self._set_program_soc_targets(self._hold_target_soc(self._battery_soc()))
         return CommandResult(True, f"Hold applied: {reason}")
 
-    async def apply_current_only(self, plan: PlanInterval) -> CommandResult:
+    async def apply_current_only(
+        self,
+        plan: PlanInterval,
+        *,
+        command_power_kw: float | None = None,
+    ) -> CommandResult:
         if self.config.get(CONF_ADVISORY_ONLY, True):
             return CommandResult(False, f"Advisory-only mode: would fast-adjust {plan.mode.value}.")
         try:
             peak_message = await self._ensure_peak_shaving()
             command_bits = [peak_message]
             if plan.mode is BatteryMode.CHARGE:
-                charge_current = self._charge_current_amps(plan.target_power_kw)
+                charge_current = self._charge_current_amps(command_power_kw if command_power_kw is not None else plan.target_power_kw)
                 emergency_limited = self._emergency_charge_current_limit(charge_current)
                 if emergency_limited < charge_current:
                     charge_current = emergency_limited
@@ -139,7 +161,7 @@ class SolarmanBackend:
                 await self._set_grid_charging(True)
                 command_bits.append(f"Fast current-only charge adjustment to {charge_current:.1f}A.")
             elif plan.mode is BatteryMode.DISCHARGE:
-                discharge_current = self._discharge_current_amps(plan.target_power_kw)
+                discharge_current = self._discharge_current_amps(command_power_kw if command_power_kw is not None else plan.target_power_kw)
                 await self._set_grid_charging(False)
                 await self._set_grid_charge_current(0.0)
                 await self._set_max_charge_current(DEFAULT_SOLARMAN_MAX_CHARGING_CURRENT_A)

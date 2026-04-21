@@ -266,6 +266,13 @@ def _plan_attrs(coordinator: BatteryOptimizerCoordinator) -> dict[str, Any]:
         return {}
     return {
         ATTR_REASONS: coordinator.data.reasons,
+        "command_target_soc_percent": coordinator.last_command_target_soc,
+        "command_target_power_kw": coordinator.last_command_target_power_kw,
+        "adaptive_state": {
+            "load_bias_kw": coordinator.adaptive_state.load_bias_kw,
+            "charge_response_factor": coordinator.adaptive_state.charge_response_factor,
+            "discharge_response_factor": coordinator.adaptive_state.discharge_response_factor,
+        },
         ATTR_PLAN: [
             {
                 "start": interval.start.isoformat(),
