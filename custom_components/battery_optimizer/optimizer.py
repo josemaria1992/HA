@@ -169,13 +169,8 @@ def optimize(input_data: OptimizationInput) -> OptimizationResult:
 
     soc = min(max(constraints.soc_percent, 0), 100)
     reserve_kwh = constraints.capacity_kwh * constraints.reserve_soc_percent / 100
-    preferred_max_soc = constraints.preferred_max_soc_percent
-    if constraints.allow_high_price_full_charge and high_threshold >= avg_price + profitable_spread:
-        max_soc = constraints.hard_max_soc_percent
-        reasons.append("High-price discharge opportunities are present, so hard max SOC may be used.")
-    else:
-        max_soc = preferred_max_soc
-        reasons.append("Using preferred max SOC to reduce battery wear.")
+    max_soc, charge_ceiling_reason = _select_charge_ceiling_soc(total_prices, constraints)
+    reasons.append(charge_ceiling_reason)
     max_kwh = constraints.capacity_kwh * max_soc / 100
 
     plan: list[PlanInterval] = []
@@ -337,6 +332,34 @@ def _future_stored_energy_values(prices: list[float], constraints: BatteryConstr
     return values
 
 
+def _select_charge_ceiling_soc(all_in_prices: list[float], constraints: BatteryConstraints) -> tuple[float, str]:
+    """Choose whether the optimizer may use preferred max SOC or hard max SOC."""
+
+    preferred_max_soc = constraints.preferred_max_soc_percent
+    if not all_in_prices:
+        return preferred_max_soc, "Using preferred max SOC because no future prices are available."
+
+    profitable_spread = constraints.degradation_cost_per_kwh + constraints.price_hysteresis
+    avg_price = mean(all_in_prices)
+    high_threshold = _percentile(all_in_prices, 0.70)
+    peak_price = max(all_in_prices)
+    very_high_margin = max(profitable_spread * 2.0, 0.35)
+    can_use_hard_max = (
+        constraints.allow_high_price_full_charge
+        and high_threshold >= avg_price + profitable_spread
+        and peak_price >= avg_price + very_high_margin
+    )
+    if can_use_hard_max:
+        return (
+            constraints.hard_max_soc_percent,
+            "Very high-price discharge opportunities are present, so hard max SOC may be used.",
+        )
+    return (
+        preferred_max_soc,
+        "Using preferred max SOC to reduce battery wear; future prices are not high enough to justify 100%.",
+    )
+
+
 def _optimize_dp(
     input_data: OptimizationInput,
     prices: list[PricePoint],
@@ -352,15 +375,7 @@ def _optimize_dp(
     interval_hours = constraints.interval_minutes / 60
     capacity = constraints.capacity_kwh
     reserve_kwh = capacity * constraints.reserve_soc_percent / 100
-    preferred_max_soc = constraints.preferred_max_soc_percent
-    avg_price = mean(all_in_prices) if all_in_prices else 0
-    high_threshold = _percentile(all_in_prices, 0.70)
-    profitable_spread = constraints.degradation_cost_per_kwh + constraints.price_hysteresis
-    max_soc = (
-        constraints.hard_max_soc_percent
-        if constraints.allow_high_price_full_charge and high_threshold >= avg_price + profitable_spread
-        else preferred_max_soc
-    )
+    max_soc, _ = _select_charge_ceiling_soc(all_in_prices, constraints)
     max_kwh = capacity * max_soc / 100
     initial_kwh = min(max(capacity * constraints.soc_percent / 100, reserve_kwh), max_kwh)
     step = max(round(capacity / 100, 3), 0.05)

@@ -101,7 +101,7 @@ def test_compute_command_targets_pushes_charge_target_beyond_current_soc() -> No
 
     assert isinstance(targets, CommandTargets)
     assert targets.target_power_kw == 3.0
-    assert targets.target_soc_percent > 55.0
+    assert targets.target_soc_percent == 58.0
     assert targets.horizon_intervals == 3
 
 
@@ -119,7 +119,7 @@ def test_compute_command_targets_pushes_discharge_target_low_enough_for_window()
     )
 
     assert targets.target_power_kw == 2.0
-    assert targets.target_soc_percent < 75.0
+    assert targets.target_soc_percent == 75.0
 
 
 def test_update_adaptive_state_learns_bias_and_response() -> None:

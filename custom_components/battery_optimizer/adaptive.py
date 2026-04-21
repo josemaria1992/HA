@@ -115,32 +115,17 @@ def compute_command_targets(
     power_horizon = max(1, math.ceil(write_interval_minutes / interval_minutes))
     power_slice = same_mode[:power_horizon]
     target_power_kw = sum(interval.target_power_kw for interval in power_slice) / len(power_slice)
-    runtime_hours = write_interval_minutes / 60
 
     if first.mode is BatteryMode.CHARGE:
-        raw_target_soc = max(interval.projected_soc_percent for interval in same_mode)
-        runtime_soc_delta = (
-            target_power_kw
-            * runtime_hours
-            * constraints.charge_efficiency
-            / max(constraints.capacity_kwh, 0.1)
-            * 100
+        target_soc = min(
+            max(interval.projected_soc_percent for interval in same_mode),
+            constraints.hard_max_soc_percent,
         )
-        desired_delta = max(raw_target_soc - current_soc_percent, runtime_soc_delta, 1.0)
-        adjusted_delta = desired_delta / max(adaptive_state.charge_response_factor, 0.5)
-        target_soc = min(current_soc_percent + adjusted_delta + 0.5, constraints.hard_max_soc_percent)
     else:
-        raw_target_soc = min(interval.projected_soc_percent for interval in same_mode)
-        runtime_soc_delta = (
-            target_power_kw
-            * runtime_hours
-            / max(constraints.discharge_efficiency, 0.1)
-            / max(constraints.capacity_kwh, 0.1)
-            * 100
+        target_soc = max(
+            min(interval.projected_soc_percent for interval in same_mode),
+            constraints.reserve_soc_percent,
         )
-        desired_delta = max(current_soc_percent - raw_target_soc, runtime_soc_delta, 1.0)
-        adjusted_delta = desired_delta / max(adaptive_state.discharge_response_factor, 0.5)
-        target_soc = max(current_soc_percent - adjusted_delta - 0.5, constraints.reserve_soc_percent)
 
     return CommandTargets(
         target_power_kw=round(target_power_kw, 3),

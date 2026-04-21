@@ -39,13 +39,7 @@ SENSORS: tuple[BatteryOptimizerSensorDescription, ...] = (
         key="projected_soc",
         translation_key="projected_soc",
         native_unit_of_measurement="%",
-        value_fn=lambda coordinator: coordinator.planned_command_target_soc
-        if coordinator.planned_command_target_soc is not None
-        else (
-            coordinator.last_command_target_soc
-            if coordinator.last_command_target_soc is not None
-            else (coordinator.data.projected_soc_percent if coordinator.data else None)
-        ),
+        value_fn=lambda coordinator: _current_projected_soc_point(coordinator).get("projected_soc_percent"),
         attrs_fn=lambda coordinator: {
             "command_target_soc_percent": coordinator.last_command_target_soc,
             "command_target_power_kw": coordinator.last_command_target_power_kw,
@@ -493,26 +487,9 @@ def _projected_soc_points_for_day(coordinator: BatteryOptimizerCoordinator, day_
     now = dt_util.now()
 
     if day_key == "today":
-        target_soc = coordinator.planned_command_target_soc
-        if target_soc is None:
-            target_soc = coordinator.last_command_target_soc
-        if target_soc is not None:
-            target_mode = None
-            if coordinator.data and coordinator.data.intervals:
-                target_mode = coordinator.data.intervals[0].mode.value
-            elif coordinator._applied_snapshot is not None:
-                target_mode = coordinator._applied_snapshot.mode.value
-            points.append(
-                {
-                    "time": now.isoformat(),
-                    "projected_soc_percent": round(target_soc, 1),
-                    "mode": target_mode,
-                    "target_power_kw": coordinator.planned_command_target_power_kw
-                    if coordinator.planned_command_target_power_kw is not None
-                    else coordinator.last_command_target_power_kw,
-                    "price": coordinator.data.intervals[0].price if coordinator.data and coordinator.data.intervals else None,
-                }
-            )
+        current_point = _current_projected_soc_point(coordinator)
+        if current_point:
+            points.append(current_point)
 
     if not coordinator.data:
         return points
@@ -533,6 +510,34 @@ def _projected_soc_points_for_day(coordinator: BatteryOptimizerCoordinator, day_
             }
         )
     return points
+
+
+def _current_projected_soc_point(coordinator: BatteryOptimizerCoordinator) -> dict[str, Any]:
+    now = dt_util.now()
+    target_soc = coordinator.planned_command_target_soc
+    if target_soc is None:
+        target_soc = coordinator.last_command_target_soc
+    if target_soc is None:
+        if coordinator.data and coordinator.data.intervals:
+            target_soc = coordinator.data.projected_soc_percent
+        else:
+            return {}
+
+    target_mode = None
+    if coordinator.data and coordinator.data.intervals:
+        target_mode = coordinator.data.intervals[0].mode.value
+    elif coordinator._applied_snapshot is not None:
+        target_mode = coordinator._applied_snapshot.mode.value
+
+    return {
+        "time": now.isoformat(),
+        "projected_soc_percent": round(target_soc, 1),
+        "mode": target_mode,
+        "target_power_kw": coordinator.planned_command_target_power_kw
+        if coordinator.planned_command_target_power_kw is not None
+        else coordinator.last_command_target_power_kw,
+        "price": coordinator.data.intervals[0].price if coordinator.data and coordinator.data.intervals else None,
+    }
 
 
 def _target_day(coordinator: BatteryOptimizerCoordinator, day_key: str):

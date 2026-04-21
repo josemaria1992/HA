@@ -18,6 +18,7 @@ LoadPoint = optimizer.LoadPoint
 OptimizationInput = optimizer.OptimizationInput
 PricePoint = optimizer.PricePoint
 optimize = optimizer.optimize
+_select_charge_ceiling_soc = optimizer._select_charge_ceiling_soc
 
 
 def _input(prices: list[float], soc: float = 50) -> OptimizationInput:
@@ -112,3 +113,23 @@ def test_dwell_hold_does_not_move_projected_soc() -> None:
 
     assert result.intervals[0].mode is BatteryMode.HOLD
     assert result.intervals[0].projected_soc_percent == 40
+
+
+def test_preferred_max_soc_is_used_for_normal_high_prices() -> None:
+    max_soc, reason = _select_charge_ceiling_soc(
+        [0.85, 0.90, 1.00, 1.10],
+        _input([0.10, 0.10, 0.10, 0.10]).constraints,
+    )
+
+    assert max_soc == 90
+    assert "preferred max SOC" in reason
+
+
+def test_hard_max_soc_requires_very_high_prices() -> None:
+    max_soc, reason = _select_charge_ceiling_soc(
+        [0.70, 0.75, 1.80, 2.10],
+        _input([0.10, 0.10, 0.10, 0.10]).constraints,
+    )
+
+    assert max_soc == 100
+    assert "hard max SOC" in reason
