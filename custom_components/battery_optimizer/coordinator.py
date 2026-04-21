@@ -281,6 +281,9 @@ class BatteryOptimizerCoordinator(DataUpdateCoordinator[OptimizationResult | Non
             self.planned_command_target_soc = target_soc
             self.planned_command_target_power_kw = target_power_kw
             apply_kind, apply_reason = self._should_write_result(result, command_targets)
+            applied_plan = result.intervals[0]
+            applied_target_soc = target_soc
+            applied_target_power_kw = target_power_kw
             if apply_kind == "skip":
                 reconcile_message = await self._async_reconcile_if_needed(apply_reason)
                 if reconcile_message:
@@ -291,6 +294,16 @@ class BatteryOptimizerCoordinator(DataUpdateCoordinator[OptimizationResult | Non
             if apply_kind == "current_only":
                 current_only_plan = self._current_only_plan(result.intervals[0])
                 current_only_power_kw = self._current_only_power_kw(current_only_plan, target_power_kw)
+                applied_plan = current_only_plan
+                if current_only_plan.mode is BatteryMode.HOLD:
+                    applied_target_soc = None
+                    applied_target_power_kw = 0.0
+                elif self._is_control_window_locked():
+                    applied_target_soc = self.last_command_target_soc
+                    applied_target_power_kw = current_only_power_kw
+                else:
+                    applied_target_soc = target_soc
+                    applied_target_power_kw = current_only_power_kw
                 command = await self.backend.apply_current_only(
                     current_only_plan,
                     command_power_kw=current_only_power_kw,
@@ -303,11 +316,11 @@ class BatteryOptimizerCoordinator(DataUpdateCoordinator[OptimizationResult | Non
                 )
             now = dt_util.now()
             self._last_device_write = now
-            self._applied_plan = result.intervals[0]
+            self._applied_plan = applied_plan
             self._applied_snapshot = self.backend.snapshot_for_plan(
-                result.intervals[0],
-                command_target_soc=target_soc,
-                command_power_kw=target_power_kw,
+                applied_plan,
+                command_target_soc=applied_target_soc,
+                command_power_kw=applied_target_power_kw,
             )
             if self._applied_snapshot.mode is BatteryMode.HOLD:
                 self.last_command_target_soc = None
@@ -315,21 +328,21 @@ class BatteryOptimizerCoordinator(DataUpdateCoordinator[OptimizationResult | Non
             else:
                 self.last_command_target_soc = self._applied_snapshot.target_soc_percent
                 self.last_command_target_power_kw = round(
-                    target_power_kw if target_power_kw is not None else result.intervals[0].target_power_kw,
+                    applied_target_power_kw if applied_target_power_kw is not None else applied_plan.target_power_kw,
                     3,
                 )
             if apply_kind == "current_only":
                 self._last_write_signature = self._last_write_signature or _command_signature(
-                    result.intervals[0],
-                    target_soc,
-                    target_power_kw,
+                    applied_plan,
+                    applied_target_soc,
+                    applied_target_power_kw,
                 )
             else:
                 self._last_full_device_write = self._last_device_write
                 self._last_write_signature = _command_signature(
-                    result.intervals[0],
-                    target_soc,
-                    target_power_kw,
+                    applied_plan,
+                    applied_target_soc,
+                    applied_target_power_kw,
                 )
             self._last_reconcile_attempt = None
             self._invalid_fallback_active = False

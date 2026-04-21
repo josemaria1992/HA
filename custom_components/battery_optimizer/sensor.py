@@ -40,35 +40,35 @@ SENSORS: tuple[BatteryOptimizerSensorDescription, ...] = (
         key="projected_soc",
         translation_key="projected_soc",
         native_unit_of_measurement="%",
-        value_fn=lambda coordinator: _current_projected_soc_point(coordinator).get("projected_soc_percent"),
+        value_fn=lambda coordinator: _display_soc(_current_projected_soc_point(coordinator).get("projected_soc_percent")),
         attrs_fn=lambda coordinator: {
             "projected_soc_source": _current_projected_soc_point(coordinator).get("source"),
-            "command_target_soc_percent": coordinator.last_command_target_soc,
+            "command_target_soc_percent": _display_soc(coordinator.last_command_target_soc),
             "command_target_power_kw": coordinator.last_command_target_power_kw,
-            "planned_command_target_soc_percent": coordinator.planned_command_target_soc,
+            "planned_command_target_soc_percent": _display_soc(coordinator.planned_command_target_soc),
             "planned_command_target_power_kw": coordinator.planned_command_target_power_kw,
-            "next_interval_projected_soc_percent": coordinator.data.projected_soc_percent if coordinator.data else None,
+            "next_interval_projected_soc_percent": _display_soc(coordinator.data.projected_soc_percent) if coordinator.data else None,
         },
     ),
     BatteryOptimizerSensorDescription(
         key="projected_soc_schedule",
         translation_key="projected_soc_schedule",
         native_unit_of_measurement="%",
-        value_fn=lambda coordinator: coordinator.data.projected_soc_percent if coordinator.data else None,
+        value_fn=lambda coordinator: _display_soc(coordinator.data.projected_soc_percent) if coordinator.data else None,
         attrs_fn=lambda coordinator: _projected_soc_schedule_attrs(coordinator),
     ),
     BatteryOptimizerSensorDescription(
         key="projected_soc_today",
         translation_key="projected_soc_today",
         native_unit_of_measurement="%",
-        value_fn=lambda coordinator: _day_projected_soc_value(coordinator, "today"),
+        value_fn=lambda coordinator: _display_soc(_day_projected_soc_value(coordinator, "today")),
         attrs_fn=lambda coordinator: _day_projected_soc_attrs(coordinator, "today"),
     ),
     BatteryOptimizerSensorDescription(
         key="projected_soc_tomorrow",
         translation_key="projected_soc_tomorrow",
         native_unit_of_measurement="%",
-        value_fn=lambda coordinator: _day_projected_soc_value(coordinator, "tomorrow"),
+        value_fn=lambda coordinator: _display_soc(_day_projected_soc_value(coordinator, "tomorrow")),
         attrs_fn=lambda coordinator: _day_projected_soc_attrs(coordinator, "tomorrow"),
     ),
     BatteryOptimizerSensorDescription(
@@ -321,7 +321,7 @@ def _plan_attrs(coordinator: BatteryOptimizerCoordinator) -> dict[str, Any]:
                 "start": interval.start.isoformat(),
                 "mode": interval.mode.value,
                 "target_power_kw": interval.target_power_kw,
-                "projected_soc_percent": interval.projected_soc_percent,
+                "projected_soc_percent": _display_soc(interval.projected_soc_percent),
                 "price": interval.price,
                 "load_kw": interval.load_kw,
                 "grid_import_without_battery_kwh": interval.grid_import_without_battery_kwh,
@@ -347,7 +347,7 @@ def _projected_soc_schedule_attrs(coordinator: BatteryOptimizerCoordinator) -> d
             "time": interval.start.isoformat(),
             "mode": interval.mode.value,
             "target_power_kw": interval.target_power_kw,
-            "projected_soc_percent": interval.projected_soc_percent,
+            "projected_soc_percent": _display_soc(interval.projected_soc_percent),
                 "price": interval.price,
                 "load_kw": interval.load_kw,
                 "reason": interval.reason,
@@ -387,7 +387,7 @@ def _mode_schedule_attrs(coordinator: BatteryOptimizerCoordinator, mode: Battery
                 "start": interval.start.isoformat(),
                 "time": interval.start.strftime("%Y-%m-%d %H:%M"),
                 "target_power_kw": interval.target_power_kw,
-                "projected_soc_percent": interval.projected_soc_percent,
+                "projected_soc_percent": _display_soc(interval.projected_soc_percent),
                 "price": interval.price,
                 "load_kw": interval.load_kw,
                 "grid_import_without_battery_kwh": interval.grid_import_without_battery_kwh,
@@ -588,7 +588,7 @@ def _day_projected_soc_value(coordinator: BatteryOptimizerCoordinator, day_key: 
     points = _projected_soc_points_for_day(coordinator, day_key)
     if not points:
         return None
-    return points[0]["projected_soc_percent"]
+    return _display_soc(points[0]["projected_soc_percent"])
 
 
 def _day_projected_soc_attrs(coordinator: BatteryOptimizerCoordinator, day_key: str) -> dict[str, Any]:
@@ -621,7 +621,7 @@ def _projected_soc_points_for_day(coordinator: BatteryOptimizerCoordinator, day_
         points.append(
             {
                 "time": local_start.isoformat(),
-                "projected_soc_percent": interval.projected_soc_percent,
+                "projected_soc_percent": _display_soc(interval.projected_soc_percent),
                 "mode": interval.mode.value,
                 "target_power_kw": interval.target_power_kw,
                 "price": interval.price,
@@ -643,7 +643,7 @@ def _current_projected_soc_point(coordinator: BatteryOptimizerCoordinator) -> di
             active_target_power_kw = coordinator._applied_plan.target_power_kw
         return {
             "time": now.isoformat(),
-            "projected_soc_percent": round(active_target_soc, 1),
+            "projected_soc_percent": _display_soc(active_target_soc),
             "mode": coordinator._applied_snapshot.mode.value,
             "target_power_kw": active_target_power_kw,
             "price": coordinator._applied_plan.price,
@@ -670,7 +670,7 @@ def _current_projected_soc_point(coordinator: BatteryOptimizerCoordinator) -> di
 
     return {
         "time": now.isoformat(),
-        "projected_soc_percent": round(target_soc, 1),
+        "projected_soc_percent": _display_soc(target_soc),
         "mode": target_mode,
         "target_power_kw": coordinator.planned_command_target_power_kw
         if coordinator.planned_command_target_power_kw is not None
@@ -687,3 +687,9 @@ def _target_day(coordinator: BatteryOptimizerCoordinator, day_key: str):
     if day_key == "tomorrow":
         return base_day + timedelta(days=1)
     return base_day
+
+
+def _display_soc(value: float | int | None) -> int | None:
+    if value is None:
+        return None
+    return int(round(float(value)))
