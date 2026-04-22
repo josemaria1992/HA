@@ -5,6 +5,7 @@ from __future__ import annotations
 from dataclasses import replace
 from datetime import date, datetime, timedelta
 import logging
+from statistics import mean
 from typing import Any
 
 from homeassistant.config_entries import ConfigEntry
@@ -36,6 +37,8 @@ from .costs import (
 from .const import (
     CONF_ADVISORY_ONLY,
     CONF_BATTERY_SOC_ENTITY,
+    CONF_FORECAST_RELIABILITY_MAX_RELATIVE_MAE,
+    CONF_FORECAST_RELIABILITY_MIN_SAMPLES,
     CONF_GRID_FEE_PER_KWH,
     CONF_LOAD_POWER_ENTITY,
     CONF_PEAK_SHAVING_A,
@@ -44,6 +47,8 @@ from .const import (
     CONF_PRICE_ENTITY,
     DEFAULT_COMMAND_WRITE_INTERVAL_MINUTES,
     DEFAULT_EMERGENCY_PHASE_CURRENT_A,
+    DEFAULT_FORECAST_RELIABILITY_MAX_RELATIVE_MAE,
+    DEFAULT_FORECAST_RELIABILITY_MIN_SAMPLES,
     DEFAULT_GRID_FEE_PER_KWH,
     DEFAULT_RECONCILE_RETRY_MINUTES,
     DEFAULT_SCAN_INTERVAL,
@@ -195,29 +200,20 @@ class BatteryOptimizerCoordinator(DataUpdateCoordinator[OptimizationResult | Non
                 error="Missing or stale data",
             )
         self._update_adaptive_state_if_interval_advanced(input_data.prices[0].start if input_data.prices else None)
+        load_forecast_reliable, reliability_reason = self._assess_load_forecast_reliability(raw_load_forecast)
+        if raw_load_forecast and load_forecast_reliable:
+            published_forecast = apply_bias_to_forecast_points(raw_load_forecast, self.adaptive_state.load_bias_kw)
+            optimizer_load_forecast = apply_load_bias(to_load_points(raw_load_forecast), self.adaptive_state.load_bias_kw)
+        else:
+            fallback_forecast = self._build_fallback_load_forecast(input_data)
+            published_forecast = apply_bias_to_forecast_points(fallback_forecast, self.adaptive_state.load_bias_kw)
+            optimizer_load_forecast = apply_load_bias(to_load_points(fallback_forecast), self.adaptive_state.load_bias_kw)
         input_data = replace(
             input_data,
-            load_forecast=apply_load_bias(input_data.load_forecast, self.adaptive_state.load_bias_kw),
+            load_forecast=optimizer_load_forecast,
+            load_forecast_reliable=load_forecast_reliable,
         )
-        if raw_load_forecast:
-            self.load_forecast = apply_bias_to_forecast_points(raw_load_forecast, self.adaptive_state.load_bias_kw)
-        else:
-            self.load_forecast = [
-                ForecastPoint(
-                    start=point.start,
-                    load_kw=point.load_kw,
-                    source="current_load_fallback+adaptive_bias"
-                    if abs(self.adaptive_state.load_bias_kw) >= 0.01
-                    else "current_load_fallback",
-                    samples=0,
-                    profile="workday",
-                    pattern_kw=point.load_kw,
-                    recent_trend_kw=None,
-                    current_load_kw=point.load_kw,
-                    adaptive_bias_kw=round(self.adaptive_state.load_bias_kw, 3),
-                )
-                for point in input_data.load_forecast
-            ]
+        self.load_forecast = published_forecast
         self.load_forecast_history = merge_forecast_history(
             self.load_forecast_history,
             self.load_forecast,
@@ -225,6 +221,7 @@ class BatteryOptimizerCoordinator(DataUpdateCoordinator[OptimizationResult | Non
         )
         self._last_input_constraints = input_data.constraints
         result = optimize(input_data)
+        result.reasons.append(reliability_reason)
         result.reasons.append(
             "Adaptive state: "
             f"load bias {self.adaptive_state.load_bias_kw:+.2f}kW, "
@@ -755,6 +752,80 @@ class BatteryOptimizerCoordinator(DataUpdateCoordinator[OptimizationResult | Non
         ]
         self.forecast_accuracy_today = summarize_forecast_accuracy(today_samples)
 
+    def _assess_load_forecast_reliability(self, forecast_points: list[ForecastPoint]) -> tuple[bool, str]:
+        min_samples = int(
+            self.config.get(
+                CONF_FORECAST_RELIABILITY_MIN_SAMPLES,
+                DEFAULT_FORECAST_RELIABILITY_MIN_SAMPLES,
+            )
+        )
+        max_relative_mae = float(
+            self.config.get(
+                CONF_FORECAST_RELIABILITY_MAX_RELATIVE_MAE,
+                DEFAULT_FORECAST_RELIABILITY_MAX_RELATIVE_MAE,
+            )
+        )
+        if not forecast_points:
+            return (
+                False,
+                "Forecast mode: fallback. No history-based load forecast was available, so price arbitrage uses a conservative flat-load estimate.",
+            )
+
+        lookahead = forecast_points[: min(len(forecast_points), 8)]
+        fallback_like = sum(
+            1
+            for point in lookahead
+            if "current_load_fallback" in point.source or point.samples < min_samples
+        )
+        if fallback_like > len(lookahead) / 2:
+            return (
+                False,
+                "Forecast mode: fallback. Most near-term forecast points are fallback-quality, so a simpler price-plus-SoC plan is used.",
+            )
+
+        recent = self.forecast_accuracy_recent
+        if (
+            recent.sample_count >= min_samples
+            and recent.relative_mae_percent is not None
+            and recent.relative_mae_percent > max_relative_mae
+        ):
+            return (
+                False,
+                "Forecast mode: fallback. Recent load forecast accuracy is poor, so the controller prioritizes price arbitrage with a conservative load estimate.",
+            )
+
+        return (
+            True,
+            "Forecast mode: reliable. History-based load forecast is being used for peak-energy sizing.",
+        )
+
+    def _build_fallback_load_forecast(self, input_data) -> list[ForecastPoint]:
+        load_values = [max(point.load_kw, 0.0) for point in input_data.load_forecast]
+        current_load_kw = _read_kw(self.hass, self.config.get(CONF_LOAD_POWER_ENTITY))
+        conservative_load_kw = round(
+            max(
+                current_load_kw or 0.0,
+                load_values[0] if load_values else 0.0,
+                mean(load_values) if load_values else 0.0,
+                max(load_values[:4]) if load_values else 0.0,
+            ),
+            3,
+        )
+        return [
+            ForecastPoint(
+                start=point.start,
+                load_kw=conservative_load_kw,
+                source="optimizer_fallback",
+                samples=0,
+                profile="fallback",
+                pattern_kw=conservative_load_kw,
+                recent_trend_kw=None,
+                current_load_kw=current_load_kw,
+                adaptive_bias_kw=0.0,
+            )
+            for point in input_data.load_forecast
+        ]
+
 
 def get_coordinator(hass: HomeAssistant, entry: ConfigEntry) -> BatteryOptimizerCoordinator:
     return hass.data[DOMAIN][entry.entry_id]
@@ -768,9 +839,24 @@ def _normalize_config(config: dict[str, Any]) -> dict[str, Any]:
         value = normalized.get(key)
         if isinstance(value, str):
             normalized[key] = [item.strip() for item in value.split(",") if item.strip()]
-    for key in ("interval_minutes", "horizon_hours", "min_dwell_intervals", "load_history_days", "load_forecast_min_samples"):
+    for key in (
+        "interval_minutes",
+        "horizon_hours",
+        "min_dwell_intervals",
+        "load_history_days",
+        "load_forecast_min_samples",
+        "forecast_reliability_min_samples",
+    ):
         if key in normalized:
             normalized[key] = int(normalized[key])
+    for key in (
+        "forecast_reliability_max_relative_mae",
+        "very_cheap_spot_price",
+        "cheap_effective_price",
+        "expensive_effective_price",
+    ):
+        if key in normalized:
+            normalized[key] = float(normalized[key])
     return normalized
 
 

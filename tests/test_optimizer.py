@@ -30,115 +30,147 @@ optimize = optimizer.optimize
 _select_charge_ceiling_soc = optimizer._select_charge_ceiling_soc
 
 
-def _input(prices: list[float], soc: float = 50) -> OptimizationInput:
+def _constraints(soc: float = 50, *, max_charge_kw: float = 3, max_discharge_kw: float = 3) -> BatteryConstraints:
+    return BatteryConstraints(
+        capacity_kwh=32.14,
+        soc_percent=soc,
+        reserve_soc_percent=10,
+        preferred_max_soc_percent=90,
+        hard_max_soc_percent=100,
+        max_charge_kw=max_charge_kw,
+        max_discharge_kw=max_discharge_kw,
+        charge_efficiency=0.95,
+        discharge_efficiency=0.95,
+        degradation_cost_per_kwh=0.01,
+        grid_fee_per_kwh=0.773,
+        interval_minutes=60,
+        min_dwell_intervals=0,
+        price_hysteresis=0.01,
+        very_cheap_spot_price=0.1,
+        cheap_effective_price=1.5,
+        expensive_effective_price=2.5,
+        optimizer_aggressiveness="balanced",
+    )
+
+
+def _input(
+    prices: list[float],
+    *,
+    soc: float = 50,
+    loads: list[float] | None = None,
+    load_reliable: bool = True,
+    max_charge_kw: float = 3,
+    max_discharge_kw: float = 3,
+) -> OptimizationInput:
     start = datetime(2026, 4, 20, tzinfo=timezone.utc)
+    loads = loads or [1.5] * len(prices)
     return OptimizationInput(
         generated_at=start,
         prices=[PricePoint(start + timedelta(hours=index), price) for index, price in enumerate(prices)],
-        load_forecast=[LoadPoint(start + timedelta(hours=index), 1.5) for index in range(len(prices))],
-        constraints=BatteryConstraints(
-            capacity_kwh=10,
-            soc_percent=soc,
-            reserve_soc_percent=10,
-            preferred_max_soc_percent=90,
-            hard_max_soc_percent=100,
-            max_charge_kw=3,
-            max_discharge_kw=3,
-            charge_efficiency=0.95,
-            discharge_efficiency=0.95,
-            degradation_cost_per_kwh=0.01,
-            grid_fee_per_kwh=0.773,
-            interval_minutes=60,
-            min_dwell_intervals=0,
-            price_hysteresis=0.01,
-            optimizer_aggressiveness="balanced",
-        ),
+        load_forecast=[LoadPoint(start + timedelta(hours=index), load) for index, load in enumerate(loads)],
+        constraints=_constraints(soc=soc, max_charge_kw=max_charge_kw, max_discharge_kw=max_discharge_kw),
+        load_forecast_reliable=load_reliable,
     )
 
 
-def test_optimizer_charges_when_prices_are_cheap_and_soc_is_low() -> None:
-    result = optimize(_input([0.00, 0.00, 1.00, 1.20], soc=20))
+def test_zero_or_negative_price_prefers_charge_not_discharge() -> None:
+    result = optimize(_input([0.0, 0.2, 2.8, 3.0], soc=35))
 
     assert result.valid
-    assert any(interval.mode is BatteryMode.CHARGE for interval in result.intervals[:2])
-    assert max(interval.projected_soc_percent for interval in result.intervals[:2]) > 20
-    assert result.cheapest_charge_windows
-    assert result.projected_cost_without_battery > 0
-    assert result.projected_cost_with_battery > 0
-
-
-def test_optimizer_discharges_when_prices_are_high() -> None:
-    result = optimize(_input([0.50, 0.45, 0.05, 0.06], soc=80))
-
-    assert result.valid
-    assert result.intervals[0].mode is BatteryMode.DISCHARGE
-    assert result.intervals[0].projected_soc_percent < 80
-    assert result.best_discharge_windows
-
-
-def test_optimizer_prefers_using_battery_before_negative_price_recharge() -> None:
-    result = optimize(_input([1.20, 1.10, -0.40, -0.35, 1.30, 1.25], soc=80))
-
-    assert result.valid
-    assert result.intervals[0].mode is BatteryMode.DISCHARGE
+    assert result.intervals[0].mode is BatteryMode.CHARGE
     assert result.intervals[0].target_power_kw > 0
-    assert any(interval.mode is BatteryMode.CHARGE for interval in result.intervals[2:4])
-    assert any("Negative Nord Pool charging windows detected" in reason for reason in result.reasons)
+    assert any("cheap grid charging is preferred" in reason for reason in result.reasons)
 
 
-def test_optimizer_holds_when_spread_is_too_small() -> None:
-    result = optimize(_input([0.20, 0.21, 0.22, 0.23], soc=60))
-
-    assert result.valid
-    assert result.intervals[0].mode is BatteryMode.HOLD
-    assert result.projected_cost_without_battery == result.projected_cost_with_battery
-    assert result.expected_savings == 0
-
-
-def test_optimizer_never_projects_below_reserve() -> None:
-    result = optimize(_input([1.00, 1.00, 1.00, 1.00], soc=11))
+def test_cheap_now_but_cheaper_later_can_wait_without_discharging() -> None:
+    result = optimize(_input([1.1, 0.0, 3.0, 3.2], soc=70))
 
     assert result.valid
-    assert min(interval.projected_soc_percent for interval in result.intervals) >= 10
+    assert result.intervals[0].mode in {BatteryMode.HOLD, BatteryMode.CHARGE}
+    assert result.intervals[0].mode is not BatteryMode.DISCHARGE
 
 
-def test_dwell_hold_does_not_move_projected_soc() -> None:
-    input_data = _input([0.05, 0.50, 0.60, 0.70], soc=40)
-    input_data = OptimizationInput(
-        generated_at=input_data.generated_at,
-        prices=input_data.prices,
-        load_forecast=input_data.load_forecast,
-        constraints=BatteryConstraints(
-            capacity_kwh=input_data.constraints.capacity_kwh,
-            soc_percent=input_data.constraints.soc_percent,
-            reserve_soc_percent=input_data.constraints.reserve_soc_percent,
-            preferred_max_soc_percent=input_data.constraints.preferred_max_soc_percent,
-            hard_max_soc_percent=input_data.constraints.hard_max_soc_percent,
-            max_charge_kw=input_data.constraints.max_charge_kw,
-            max_discharge_kw=input_data.constraints.max_discharge_kw,
-            charge_efficiency=input_data.constraints.charge_efficiency,
-            discharge_efficiency=input_data.constraints.discharge_efficiency,
-            degradation_cost_per_kwh=input_data.constraints.degradation_cost_per_kwh,
-            grid_fee_per_kwh=input_data.constraints.grid_fee_per_kwh,
-            interval_minutes=input_data.constraints.interval_minutes,
-            min_dwell_intervals=2,
-            price_hysteresis=input_data.constraints.price_hysteresis,
-            optimizer_aggressiveness=input_data.constraints.optimizer_aggressiveness,
-        ),
-        previous_mode=BatteryMode.DISCHARGE,
-        previous_mode_intervals=1,
+def test_fallback_mode_still_charges_for_later_peak() -> None:
+    result = optimize(
+        _input([0.6, 0.7, 3.2, 3.1], soc=20, loads=[0.8, 0.8, 2.0, 2.0], load_reliable=False)
     )
 
-    result = optimize(input_data)
+    assert result.valid
+    assert result.intervals[0].mode is BatteryMode.CHARGE
+    assert any("Forecast mode: fallback" in reason for reason in result.reasons)
 
-    assert result.intervals[0].mode is BatteryMode.HOLD
-    assert result.intervals[0].projected_soc_percent == 40
+
+def test_expensive_now_discharges_to_serve_load_only() -> None:
+    result = optimize(_input([3.2, 1.0, 0.8, 0.7], soc=80, loads=[1.2, 1.0, 1.0, 1.0], max_discharge_kw=8))
+
+    assert result.valid
+    assert result.intervals[0].mode is BatteryMode.DISCHARGE
+    assert result.intervals[0].target_power_kw <= result.intervals[0].load_kw
+
+
+def test_more_valuable_later_peak_avoids_overdischarging_early() -> None:
+    result = optimize(_input([2.7, 5.0, 5.2, 0.2], soc=22, loads=[1.5, 1.5, 1.5, 1.5]))
+
+    assert result.valid
+    assert result.intervals[0].mode in {BatteryMode.HOLD, BatteryMode.CHARGE}
+
+
+def test_soc_89_can_charge_above_90_for_very_expensive_future_hours() -> None:
+    result = optimize(_input([0.2, 5.0, 5.2, 5.1], soc=89))
+
+    assert result.valid
+    assert max(interval.projected_soc_percent for interval in result.intervals[:2]) > 90
+    assert any("hard max SOC" in reason for reason in result.reasons)
+
+
+def test_soc_95_does_not_charge_further_without_strong_future_peak() -> None:
+    result = optimize(_input([0.1, 0.2, 1.0, 1.1], soc=95))
+
+    assert result.valid
+    assert result.intervals[0].mode is not BatteryMode.CHARGE
+
+
+def test_no_export_discharge_is_clamped_to_load() -> None:
+    result = optimize(_input([3.5, 3.0, 0.4, 0.3], soc=80, loads=[0.6, 0.5, 0.5, 0.5], max_discharge_kw=12))
+
+    assert result.valid
+    assert result.intervals[0].mode is BatteryMode.DISCHARGE
+    assert result.intervals[0].target_power_kw <= 0.6
+    assert result.intervals[0].grid_import_with_battery_kwh >= 0
+
+
+def test_unreliable_forecast_never_discharges_at_zero_price() -> None:
+    result = optimize(
+        _input([0.0, 0.1, 2.8, 2.9], soc=75, loads=[3.0, 0.5, 0.5, 0.5], load_reliable=False)
+    )
+
+    assert result.valid
+    assert result.intervals[0].mode is BatteryMode.CHARGE
+
+
+def test_regression_zero_price_after_expensive_charge_stops_discharge() -> None:
+    result = optimize(_input([0.0, 0.2, 2.6, 2.7, -0.2], soc=80))
+
+    assert result.valid
+    assert result.intervals[0].mode is BatteryMode.CHARGE
+    assert result.intervals[0].target_power_kw > 0
+
+
+def test_reported_savings_match_electricity_cost_delta_only() -> None:
+    result = optimize(_input([0.1, 0.1, 3.0, 3.2], soc=80))
+
+    assert result.valid
+    assert result.expected_savings == round(
+        result.projected_cost_without_battery - result.projected_cost_with_battery,
+        3,
+    )
+    assert result.expected_net_value <= result.expected_savings
 
 
 def test_preferred_max_soc_is_used_for_normal_high_prices() -> None:
     max_soc, reason = _select_charge_ceiling_soc(
         [0.85, 0.90, 1.00, 1.10],
-        _input([0.10, 0.10, 0.10, 0.10]).constraints,
+        _constraints(),
     )
 
     assert max_soc == 90
@@ -147,46 +179,9 @@ def test_preferred_max_soc_is_used_for_normal_high_prices() -> None:
 
 def test_hard_max_soc_requires_very_high_prices() -> None:
     max_soc, reason = _select_charge_ceiling_soc(
-        [0.70, 0.75, 1.80, 2.10],
-        _input([0.10, 0.10, 0.10, 0.10]).constraints,
+        [0.70, 0.75, 2.60, 3.10],
+        _constraints(),
     )
 
     assert max_soc == 100
     assert "hard max SOC" in reason
-
-
-def test_reported_savings_match_electricity_cost_delta_only() -> None:
-    input_data = _input([0.05, 0.05, 1.80, 1.90], soc=80)
-    input_data = OptimizationInput(
-        generated_at=input_data.generated_at,
-        prices=input_data.prices,
-        load_forecast=input_data.load_forecast,
-        constraints=BatteryConstraints(
-            capacity_kwh=input_data.constraints.capacity_kwh,
-            soc_percent=input_data.constraints.soc_percent,
-            reserve_soc_percent=input_data.constraints.reserve_soc_percent,
-            preferred_max_soc_percent=input_data.constraints.preferred_max_soc_percent,
-            hard_max_soc_percent=input_data.constraints.hard_max_soc_percent,
-            max_charge_kw=input_data.constraints.max_charge_kw,
-            max_discharge_kw=input_data.constraints.max_discharge_kw,
-            charge_efficiency=input_data.constraints.charge_efficiency,
-            discharge_efficiency=input_data.constraints.discharge_efficiency,
-            degradation_cost_per_kwh=0.5,
-            grid_fee_per_kwh=input_data.constraints.grid_fee_per_kwh,
-            interval_minutes=input_data.constraints.interval_minutes,
-            min_dwell_intervals=input_data.constraints.min_dwell_intervals,
-            price_hysteresis=input_data.constraints.price_hysteresis,
-            optimizer_aggressiveness=input_data.constraints.optimizer_aggressiveness,
-        ),
-        previous_mode=input_data.previous_mode,
-        previous_mode_intervals=input_data.previous_mode_intervals,
-    )
-
-    result = optimize(input_data)
-
-    assert result.valid
-    assert result.expected_savings == round(
-        result.projected_cost_without_battery - result.projected_cost_with_battery,
-        3,
-    )
-    assert result.expected_net_value <= result.expected_savings

@@ -25,10 +25,15 @@
           "hard_max_soc": "Hard max SOC",
           "degradation_cost": "Battery degradation cost per kWh",
           "grid_fee_per_kwh": "Tax and grid fees per kWh",
+          "very_cheap_spot_price": "Very cheap spot-price threshold",
+          "cheap_effective_price": "Cheap effective-price threshold",
+          "expensive_effective_price": "Expensive effective-price threshold",
           "interval_minutes": "Plan interval minutes",
           "horizon_hours": "Planning horizon hours",
           "min_dwell_intervals": "Minimum dwell intervals",
           "price_hysteresis": "Price hysteresis",
+          "forecast_reliability_min_samples": "Forecast reliability minimum samples",
+          "forecast_reliability_max_relative_mae": "Forecast reliability maximum relative MAE",
           "optimizer_aggressiveness": "Optimizer aggressiveness",
           "advisory_only": "Advisory-only mode",
           "allow_high_price_full_charge": "Allow 100% charge for high-price windows",
@@ -57,6 +62,7 @@
       "soc_limits": "SOC limits must be reserve < preferred max <= hard max.",
       "peak_below_fuse": "Peak shaving threshold should be at or above the fuse rating.",
       "release_above_peak": "Peak shaving release threshold must be below the trigger threshold.",
+      "cheap_above_expensive": "Cheap effective-price threshold must be below the expensive threshold.",
       "positive": "This value must be positive.",
       "non_negative": "This value cannot be negative."
     }

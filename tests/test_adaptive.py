@@ -61,6 +61,9 @@ def _constraints() -> BatteryConstraints:
         interval_minutes=15,
         min_dwell_intervals=0,
         price_hysteresis=0.01,
+        very_cheap_spot_price=0.1,
+        cheap_effective_price=1.5,
+        expensive_effective_price=2.5,
         optimizer_aggressiveness="balanced",
     )
 

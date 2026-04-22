@@ -16,6 +16,7 @@ from .const import (
     CONF_BATTERY_VOLTAGE_ENTITY,
     CONF_GRID_CHARGING_CURRENT_NUMBER,
     CONF_GRID_CHARGING_SWITCH,
+    CONF_LOAD_POWER_ENTITY,
     CONF_MAX_CHARGING_CURRENT_NUMBER,
     CONF_MAX_DISCHARGING_CURRENT_NUMBER,
     CONF_PEAK_SHAVING_A,
@@ -31,6 +32,7 @@ from .const import (
     DEFAULT_SOLARMAN_MAX_DISCHARGING_CURRENT_A,
 )
 from .optimizer import BatteryMode, PlanInterval
+from .power import power_value_to_kw
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -129,12 +131,18 @@ class SolarmanBackend:
                 )
             elif plan.mode is BatteryMode.DISCHARGE:
                 target_soc = command_target_soc if command_target_soc is not None else self._discharge_target_soc(plan, current_soc)
-                discharge_current = self._discharge_current_amps(command_power_kw if command_power_kw is not None else plan.target_power_kw)
+                requested_power_kw = command_power_kw if command_power_kw is not None else plan.target_power_kw
+                discharge_power_kw = self._clamp_discharge_power_kw(
+                    requested_power_kw
+                )
+                discharge_current = self._discharge_current_amps(discharge_power_kw)
                 await self._set_program_soc_targets(target_soc)
                 await self._set_grid_charging(False)
                 await self._set_grid_charge_current(0.0)
                 await self._set_max_charge_current(DEFAULT_SOLARMAN_MAX_CHARGING_CURRENT_A)
                 await self._set_max_discharge_current(discharge_current)
+                if discharge_power_kw + 0.01 < requested_power_kw:
+                    command_bits.append("Discharge power was clamped to live house load to avoid export.")
                 command_bits.append(
                     f"Discharge floor SOC {target_soc:.0f}%, discharge limit {discharge_current:.1f}A, grid charging off."
                 )
@@ -182,11 +190,17 @@ class SolarmanBackend:
                 await self._set_grid_charging(True)
                 command_bits.append(f"Fast current-only charge adjustment to {charge_current:.1f}A.")
             elif plan.mode is BatteryMode.DISCHARGE:
-                discharge_current = self._discharge_current_amps(command_power_kw if command_power_kw is not None else plan.target_power_kw)
+                requested_power_kw = command_power_kw if command_power_kw is not None else plan.target_power_kw
+                discharge_power_kw = self._clamp_discharge_power_kw(
+                    requested_power_kw
+                )
+                discharge_current = self._discharge_current_amps(discharge_power_kw)
                 await self._set_grid_charging(False)
                 await self._set_grid_charge_current(0.0)
                 await self._set_max_charge_current(DEFAULT_SOLARMAN_MAX_CHARGING_CURRENT_A)
                 await self._set_max_discharge_current(discharge_current)
+                if discharge_power_kw + 0.01 < requested_power_kw:
+                    command_bits.append("Discharge power was clamped to live house load to avoid export.")
                 command_bits.append(f"Fast current-only discharge adjustment to {discharge_current:.1f}A.")
             else:
                 await self._set_grid_charging(False)
@@ -361,6 +375,12 @@ class SolarmanBackend:
             max_limit = min(max_limit, configured_limit)
         return min(amps, max_limit)
 
+    def _clamp_discharge_power_kw(self, target_kw: float) -> float:
+        live_load_kw = self._live_load_kw()
+        if live_load_kw is None:
+            return max(target_kw, 0.0)
+        return max(min(target_kw, live_load_kw), 0.0)
+
     def _charge_target_soc(self, plan: PlanInterval, current_soc: float) -> float:
         return min(max(plan.projected_soc_percent, current_soc + 1.0), 100.0)
 
@@ -409,7 +429,8 @@ class SolarmanBackend:
             )
         if plan.mode is BatteryMode.DISCHARGE:
             target_soc = command_target_soc if command_target_soc is not None else self._discharge_target_soc(plan, current_soc)
-            discharge_current = self._discharge_current_amps(target_power_kw)
+            discharge_power_kw = self._clamp_discharge_power_kw(target_power_kw)
+            discharge_current = self._discharge_current_amps(discharge_power_kw)
             return CommandSnapshot(
                 mode=BatteryMode.DISCHARGE,
                 target_soc_percent=round(target_soc, 1),
@@ -473,6 +494,20 @@ class SolarmanBackend:
             issues.append(f"{max_discharge_number} does not match {snapshot.max_discharge_current_a:.1f}A.")
 
         return (len(issues) == 0, issues)
+
+    def _live_load_kw(self) -> float | None:
+        entity_id = self.config.get(CONF_LOAD_POWER_ENTITY)
+        if not entity_id:
+            return None
+        state = self.hass.states.get(entity_id)
+        if state is None or state.state in {"unknown", "unavailable", ""}:
+            return None
+        try:
+            value = float(state.state)
+        except ValueError:
+            return None
+        unit = getattr(state, "attributes", {}).get("unit_of_measurement")
+        return power_value_to_kw(value, str(unit) if unit is not None else None)
 
 
 def _read_number(hass: HomeAssistant, entity_id: str | None) -> float | None:

@@ -20,6 +20,9 @@ from .const import (
     CONF_CHARGE_EFFICIENCY,
     CONF_DEGRADATION_COST,
     CONF_DISCHARGE_EFFICIENCY,
+    CONF_EXPENSIVE_EFFECTIVE_PRICE,
+    CONF_FORECAST_RELIABILITY_MAX_RELATIVE_MAE,
+    CONF_FORECAST_RELIABILITY_MIN_SAMPLES,
     CONF_GRID_FEE_PER_KWH,
     CONF_HARD_MAX_SOC,
     CONF_HORIZON_HOURS,
@@ -36,9 +39,16 @@ from .const import (
     CONF_PRICE_ENTITY,
     CONF_PRICE_HYSTERESIS,
     CONF_RESERVE_SOC,
+    CONF_VERY_CHEAP_SPOT_PRICE,
+    CONF_CHEAP_EFFECTIVE_PRICE,
     DEFAULT_HORIZON_HOURS,
     DEFAULT_INTERVAL_MINUTES,
+    DEFAULT_CHEAP_EFFECTIVE_PRICE,
+    DEFAULT_EXPENSIVE_EFFECTIVE_PRICE,
+    DEFAULT_FORECAST_RELIABILITY_MAX_RELATIVE_MAE,
+    DEFAULT_FORECAST_RELIABILITY_MIN_SAMPLES,
     DEFAULT_GRID_FEE_PER_KWH,
+    DEFAULT_VERY_CHEAP_SPOT_PRICE,
 )
 from .optimizer import BatteryConstraints, LoadPoint, OptimizationInput, PricePoint
 
@@ -117,6 +127,15 @@ class DataIngestor:
             interval_minutes=int(self.config.get(CONF_INTERVAL_MINUTES, DEFAULT_INTERVAL_MINUTES)),
             min_dwell_intervals=int(self.config[CONF_MIN_DWELL_INTERVALS]),
             price_hysteresis=float(self.config[CONF_PRICE_HYSTERESIS]),
+            very_cheap_spot_price=float(
+                self.config.get(CONF_VERY_CHEAP_SPOT_PRICE, DEFAULT_VERY_CHEAP_SPOT_PRICE)
+            ),
+            cheap_effective_price=float(
+                self.config.get(CONF_CHEAP_EFFECTIVE_PRICE, DEFAULT_CHEAP_EFFECTIVE_PRICE)
+            ),
+            expensive_effective_price=float(
+                self.config.get(CONF_EXPENSIVE_EFFECTIVE_PRICE, DEFAULT_EXPENSIVE_EFFECTIVE_PRICE)
+            ),
             optimizer_aggressiveness=str(self.config.get(CONF_OPTIMIZER_AGGRESSIVENESS, "balanced")),
             allow_high_price_full_charge=bool(self.config.get(CONF_ALLOW_HIGH_PRICE_FULL_CHARGE, True)),
         )

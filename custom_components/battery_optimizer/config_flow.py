@@ -22,6 +22,9 @@ from .const import (
     CONF_CHARGE_EFFICIENCY,
     CONF_DEGRADATION_COST,
     CONF_DISCHARGE_EFFICIENCY,
+    CONF_EXPENSIVE_EFFECTIVE_PRICE,
+    CONF_FORECAST_RELIABILITY_MAX_RELATIVE_MAE,
+    CONF_FORECAST_RELIABILITY_MIN_SAMPLES,
     CONF_GRID_CHARGING_CURRENT_NUMBER,
     CONF_GRID_CHARGING_SWITCH,
     CONF_GRID_FEE_PER_KWH,
@@ -52,10 +55,15 @@ from .const import (
     CONF_PRICE_HYSTERESIS,
     CONF_PROGRAM_SOC_NUMBERS,
     CONF_RESERVE_SOC,
+    CONF_CHEAP_EFFECTIVE_PRICE,
     CONF_SOLARMAN_ENABLED,
+    CONF_VERY_CHEAP_SPOT_PRICE,
     CONF_WORK_MODE_SELECT,
     DEFAULT_BATTERY_VOLTAGE,
     DEFAULT_DEGRADATION_COST,
+    DEFAULT_EXPENSIVE_EFFECTIVE_PRICE,
+    DEFAULT_FORECAST_RELIABILITY_MAX_RELATIVE_MAE,
+    DEFAULT_FORECAST_RELIABILITY_MIN_SAMPLES,
     DEFAULT_GRID_FEE_PER_KWH,
     DEFAULT_HARD_MAX_SOC,
     DEFAULT_HORIZON_HOURS,
@@ -69,6 +77,8 @@ from .const import (
     DEFAULT_PREFERRED_MAX_SOC,
     DEFAULT_PRICE_HYSTERESIS,
     DEFAULT_RESERVE_SOC,
+    DEFAULT_CHEAP_EFFECTIVE_PRICE,
+    DEFAULT_VERY_CHEAP_SPOT_PRICE,
     DOMAIN,
     AGGRESSIVENESS_OPTIONS,
 )
@@ -149,10 +159,15 @@ def _schema(defaults: dict[str, Any] | None = None, *, options: bool = False) ->
             required(CONF_HARD_MAX_SOC, default=defaults.get(CONF_HARD_MAX_SOC, DEFAULT_HARD_MAX_SOC)): selector.NumberSelector(selector.NumberSelectorConfig(min=50, max=100, step=1, unit_of_measurement="%", mode=selector.NumberSelectorMode.SLIDER)),
             required(CONF_DEGRADATION_COST, default=defaults.get(CONF_DEGRADATION_COST, DEFAULT_DEGRADATION_COST)): selector.NumberSelector(selector.NumberSelectorConfig(min=0, max=10, step=0.01, mode=selector.NumberSelectorMode.BOX)),
             required(CONF_GRID_FEE_PER_KWH, default=defaults.get(CONF_GRID_FEE_PER_KWH, DEFAULT_GRID_FEE_PER_KWH)): selector.NumberSelector(selector.NumberSelectorConfig(min=0, max=20, step=0.001, mode=selector.NumberSelectorMode.BOX, unit_of_measurement="SEK/kWh")),
+            required(CONF_VERY_CHEAP_SPOT_PRICE, default=defaults.get(CONF_VERY_CHEAP_SPOT_PRICE, DEFAULT_VERY_CHEAP_SPOT_PRICE)): selector.NumberSelector(selector.NumberSelectorConfig(min=-10, max=10, step=0.01, mode=selector.NumberSelectorMode.BOX, unit_of_measurement="SEK/kWh")),
+            required(CONF_CHEAP_EFFECTIVE_PRICE, default=defaults.get(CONF_CHEAP_EFFECTIVE_PRICE, DEFAULT_CHEAP_EFFECTIVE_PRICE)): selector.NumberSelector(selector.NumberSelectorConfig(min=0, max=20, step=0.01, mode=selector.NumberSelectorMode.BOX, unit_of_measurement="SEK/kWh")),
+            required(CONF_EXPENSIVE_EFFECTIVE_PRICE, default=defaults.get(CONF_EXPENSIVE_EFFECTIVE_PRICE, DEFAULT_EXPENSIVE_EFFECTIVE_PRICE)): selector.NumberSelector(selector.NumberSelectorConfig(min=0, max=20, step=0.01, mode=selector.NumberSelectorMode.BOX, unit_of_measurement="SEK/kWh")),
             required(CONF_INTERVAL_MINUTES, default=defaults.get(CONF_INTERVAL_MINUTES, DEFAULT_INTERVAL_MINUTES)): selector.SelectSelector(selector.SelectSelectorConfig(options=["15", "30", "60"], mode=selector.SelectSelectorMode.DROPDOWN)),
             required(CONF_HORIZON_HOURS, default=defaults.get(CONF_HORIZON_HOURS, DEFAULT_HORIZON_HOURS)): selector.NumberSelector(selector.NumberSelectorConfig(min=24, max=48, step=1, unit_of_measurement="h", mode=selector.NumberSelectorMode.BOX)),
             required(CONF_MIN_DWELL_INTERVALS, default=defaults.get(CONF_MIN_DWELL_INTERVALS, DEFAULT_MIN_DWELL_INTERVALS)): selector.NumberSelector(selector.NumberSelectorConfig(min=0, max=12, step=1, mode=selector.NumberSelectorMode.BOX)),
             required(CONF_PRICE_HYSTERESIS, default=defaults.get(CONF_PRICE_HYSTERESIS, DEFAULT_PRICE_HYSTERESIS)): selector.NumberSelector(selector.NumberSelectorConfig(min=0, max=5, step=0.01, mode=selector.NumberSelectorMode.BOX)),
+            required(CONF_FORECAST_RELIABILITY_MIN_SAMPLES, default=defaults.get(CONF_FORECAST_RELIABILITY_MIN_SAMPLES, DEFAULT_FORECAST_RELIABILITY_MIN_SAMPLES)): selector.NumberSelector(selector.NumberSelectorConfig(min=1, max=50, step=1, mode=selector.NumberSelectorMode.BOX)),
+            required(CONF_FORECAST_RELIABILITY_MAX_RELATIVE_MAE, default=defaults.get(CONF_FORECAST_RELIABILITY_MAX_RELATIVE_MAE, DEFAULT_FORECAST_RELIABILITY_MAX_RELATIVE_MAE)): selector.NumberSelector(selector.NumberSelectorConfig(min=1, max=200, step=1, mode=selector.NumberSelectorMode.BOX, unit_of_measurement="%")),
             required(CONF_OPTIMIZER_AGGRESSIVENESS, default=defaults.get(CONF_OPTIMIZER_AGGRESSIVENESS, DEFAULT_OPTIMIZER_AGGRESSIVENESS)): selector.SelectSelector(selector.SelectSelectorConfig(options=AGGRESSIVENESS_OPTIONS, mode=selector.SelectSelectorMode.DROPDOWN)),
             required(CONF_ADVISORY_ONLY, default=defaults.get(CONF_ADVISORY_ONLY, True)): bool,
             required(CONF_ALLOW_HIGH_PRICE_FULL_CHARGE, default=defaults.get(CONF_ALLOW_HIGH_PRICE_FULL_CHARGE, True)): bool,
@@ -198,4 +213,8 @@ def _validate(data: dict[str, Any]) -> dict[str, str]:
         errors[CONF_DEGRADATION_COST] = "non_negative"
     if float(data.get(CONF_GRID_FEE_PER_KWH, 0)) < 0:
         errors[CONF_GRID_FEE_PER_KWH] = "non_negative"
+    cheap = float(data.get(CONF_CHEAP_EFFECTIVE_PRICE, DEFAULT_CHEAP_EFFECTIVE_PRICE))
+    expensive = float(data.get(CONF_EXPENSIVE_EFFECTIVE_PRICE, DEFAULT_EXPENSIVE_EFFECTIVE_PRICE))
+    if cheap >= expensive:
+        errors[CONF_CHEAP_EFFECTIVE_PRICE] = "cheap_above_expensive"
     return errors
