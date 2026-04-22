@@ -649,36 +649,28 @@ def _current_projected_soc_point(coordinator: BatteryOptimizerCoordinator) -> di
             "source": "active_command",
         }
 
-    target_soc = coordinator.planned_command_target_soc
-    source = "planned_command"
-    if target_soc is None:
-        target_soc = coordinator.last_command_target_soc
-        source = "last_command"
-    if target_soc is None:
-        if coordinator.data and coordinator.data.intervals:
-            target_soc = coordinator.data.projected_soc_percent
-            source = "planned_interval"
-        else:
-            return {}
-
-    target_mode = None
     if coordinator.data and coordinator.data.intervals:
-        target_mode = coordinator.data.intervals[0].mode.value
-    elif coordinator._applied_snapshot is not None:
-        target_mode = coordinator._applied_snapshot.mode.value
+        planned_interval = coordinator.data.intervals[0]
+        return {
+            "time": now.isoformat(),
+            "projected_soc_percent": _display_soc(planned_interval.projected_soc_percent),
+            "mode": planned_interval.mode.value,
+            "target_power_kw": planned_interval.target_power_kw,
+            "price": planned_interval.price,
+            "source": "planned_interval",
+        }
 
-    return {
-        "time": now.isoformat(),
-        "projected_soc_percent": _display_soc(target_soc),
-        "mode": target_mode,
-        "target_power_kw": coordinator.planned_command_target_power_kw
-        if coordinator.planned_command_target_power_kw is not None
-        else coordinator.last_command_target_power_kw,
-        "price": coordinator.data.intervals[0].price if coordinator.data and coordinator.data.intervals else (
-            coordinator._applied_plan.price if coordinator._applied_plan is not None else None
-        ),
-        "source": source,
-    }
+    if coordinator._applied_plan is not None and coordinator._applied_snapshot is not None:
+        return {
+            "time": now.isoformat(),
+            "projected_soc_percent": _display_soc(coordinator._applied_plan.projected_soc_percent),
+            "mode": coordinator._applied_snapshot.mode.value,
+            "target_power_kw": coordinator.last_command_target_power_kw,
+            "price": coordinator._applied_plan.price,
+            "source": "last_command",
+        }
+
+    return {}
 
 
 def _target_day(coordinator: BatteryOptimizerCoordinator, day_key: str):

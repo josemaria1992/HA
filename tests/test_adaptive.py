@@ -114,6 +114,67 @@ def test_compute_command_targets_pushes_charge_target_beyond_current_soc() -> No
     assert targets.horizon_intervals == 3
 
 
+def test_compute_command_targets_uses_full_future_charge_goal_not_first_short_run() -> None:
+    start = datetime(2026, 4, 21, tzinfo=timezone.utc)
+    targets = compute_command_targets(
+        [
+            _plan(BatteryMode.CHARGE, start, 52.0, 3.0),
+            _plan(BatteryMode.HOLD, start + timedelta(minutes=15), 52.0, 0.0),
+            _plan(BatteryMode.CHARGE, start + timedelta(minutes=30), 90.0, 3.0),
+        ],
+        _constraints(),
+        current_soc_percent=50.0,
+        adaptive_state=AdaptiveState(),
+    )
+
+    assert targets.target_soc_percent == 90.0
+
+
+def test_compute_command_targets_uses_strategic_charge_target_in_cheap_window() -> None:
+    start = datetime(2026, 4, 21, tzinfo=timezone.utc)
+    cheap_now = PlanInterval(
+        start=start,
+        mode=BatteryMode.CHARGE,
+        target_power_kw=3.0,
+        projected_soc_percent=38.0,
+        price=0.773,
+        load_kw=1.5,
+        grid_import_without_battery_kwh=1.0,
+        grid_import_with_battery_kwh=0.5,
+        cost_without_battery=1.0,
+        cost_with_battery=0.5,
+        electricity_savings=0.5,
+        degradation_cost=0.0,
+        net_value=0.5,
+        reason="cheap now",
+    )
+    expensive_later = PlanInterval(
+        start=start + timedelta(hours=1),
+        mode=BatteryMode.HOLD,
+        target_power_kw=0.0,
+        projected_soc_percent=38.0,
+        price=3.5,
+        load_kw=1.5,
+        grid_import_without_battery_kwh=1.0,
+        grid_import_with_battery_kwh=0.5,
+        cost_without_battery=1.0,
+        cost_with_battery=0.5,
+        electricity_savings=0.5,
+        degradation_cost=0.0,
+        net_value=0.5,
+        reason="expensive later",
+    )
+
+    targets = compute_command_targets(
+        [cheap_now, expensive_later],
+        _constraints(),
+        current_soc_percent=35.0,
+        adaptive_state=AdaptiveState(),
+    )
+
+    assert targets.target_soc_percent == 90.0
+
+
 def test_compute_command_targets_uses_reserve_floor_for_discharge_window() -> None:
     start = datetime(2026, 4, 21, tzinfo=timezone.utc)
     targets = compute_command_targets(

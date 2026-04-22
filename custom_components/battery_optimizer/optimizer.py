@@ -331,6 +331,7 @@ def _build_strategy_context(
     high_threshold = _dynamic_high_threshold(all_in_prices, constraints)
     profitable_spread = constraints.degradation_cost_per_kwh + constraints.price_hysteresis
     target_peak_soc_percent = _target_peak_soc_percent(
+        raw_prices=raw_prices,
         all_in_prices=all_in_prices,
         loads_kw=loads_kw,
         constraints=constraints,
@@ -440,6 +441,7 @@ def _valuable_future_price_threshold(
 
 def _target_peak_soc_percent(
     *,
+    raw_prices: list[float],
     all_in_prices: list[float],
     loads_kw: list[float],
     constraints: BatteryConstraints,
@@ -464,6 +466,16 @@ def _target_peak_soc_percent(
         if all_in_prices[index] >= valuable_threshold
     )
     target_kwh = min(reserve_kwh + valuable_energy_kwh, ceiling_kwh)
+    if (
+        raw_prices
+        and raw_prices[0] <= constraints.very_cheap_spot_price + 0.05
+        and any(price >= current_all_in_price + profitable_spread for price in all_in_prices[1:])
+    ):
+        preferred_ceiling_kwh = capacity * min(
+            constraints.preferred_max_soc_percent,
+            target_charge_ceiling_soc_percent,
+        ) / 100
+        target_kwh = max(target_kwh, preferred_ceiling_kwh)
     return round(max(constraints.reserve_soc_percent, (target_kwh / capacity) * 100), 1)
 
 

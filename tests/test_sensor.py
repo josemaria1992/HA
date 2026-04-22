@@ -172,4 +172,4 @@ def test_current_projected_soc_uses_planned_target_when_window_not_locked() -> N
     assert point["projected_soc_percent"] == 54.0
     assert point["target_power_kw"] == 1.8
     assert point["mode"] == BatteryMode.CHARGE.value
-    assert point["source"] == "planned_command"
+    assert point["source"] == "planned_interval"

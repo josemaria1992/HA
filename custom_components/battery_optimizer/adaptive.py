@@ -203,10 +203,23 @@ def compute_command_targets(
     target_power_kw = sum(interval.target_power_kw for interval in power_slice) / len(power_slice)
 
     if first.mode is BatteryMode.CHARGE:
-        target_soc = min(
-            max(interval.projected_soc_percent for interval in same_mode),
-            constraints.hard_max_soc_percent,
-        )
+        target_soc = max(interval.projected_soc_percent for interval in intervals if interval.mode is BatteryMode.CHARGE)
+        future_peak_price = max((interval.price for interval in intervals[1:]), default=first.price)
+        if (
+            first.price <= constraints.cheap_effective_price
+            and future_peak_price >= first.price + constraints.price_hysteresis
+        ):
+            target_soc = max(target_soc, constraints.preferred_max_soc_percent)
+        if (
+            constraints.allow_high_price_full_charge
+            and any(
+                interval.mode is BatteryMode.CHARGE
+                and interval.projected_soc_percent > constraints.preferred_max_soc_percent
+                for interval in intervals
+            )
+        ):
+            target_soc = max(target_soc, constraints.hard_max_soc_percent)
+        target_soc = min(target_soc, constraints.hard_max_soc_percent)
     else:
         target_soc = constraints.reserve_soc_percent
 
