@@ -58,6 +58,7 @@ from .load_forecast import (
     ForecastPoint,
     apply_bias_to_forecast_points,
     async_build_history_load_forecast,
+    merge_forecast_history,
     to_load_points,
 )
 from .optimizer import BatteryMode, OptimizationResult, PlanInterval, optimize
@@ -90,6 +91,7 @@ class BatteryOptimizerCoordinator(DataUpdateCoordinator[OptimizationResult | Non
         self.cost_tracking_reset_at: datetime | None = None
         self.cost_tracking_status = "Waiting for first runtime sample."
         self.load_forecast: list[ForecastPoint] = []
+        self.load_forecast_history: list[ForecastPoint] = []
         self._last_daily_sample: datetime | None = None
         self._store = Store[dict[str, Any]](hass, STORE_VERSION, f"{DOMAIN}_{entry.entry_id}_daily")
         self._previous_mode: BatteryMode | None = None
@@ -216,6 +218,11 @@ class BatteryOptimizerCoordinator(DataUpdateCoordinator[OptimizationResult | Non
                 )
                 for point in input_data.load_forecast
             ]
+        self.load_forecast_history = merge_forecast_history(
+            self.load_forecast_history,
+            self.load_forecast,
+            dt_util.now(),
+        )
         self._last_input_constraints = input_data.constraints
         result = optimize(input_data)
         result.reasons.append(

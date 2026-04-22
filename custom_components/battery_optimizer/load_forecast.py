@@ -120,6 +120,40 @@ def apply_bias_to_forecast_points(points: list[ForecastPoint], bias_kw: float) -
     return adjusted
 
 
+def merge_forecast_history(
+    existing: list[ForecastPoint],
+    updates: list[ForecastPoint],
+    now: datetime,
+    retain_days: int = 2,
+) -> list[ForecastPoint]:
+    """Keep today's and tomorrow's forecast points visible for dashboard comparison.
+
+    Existing points for intervals already in the past are preserved so charts can keep
+    showing what the forecast used to be. Future intervals are refreshed with the latest
+    forecast values on each optimizer update.
+    """
+
+    now_local = dt_util.as_local(now)
+    retain_start = now_local.replace(hour=0, minute=0, second=0, microsecond=0)
+    retain_end = retain_start + timedelta(days=retain_days)
+    merged: dict[datetime, ForecastPoint] = {}
+
+    for point in existing:
+        local_start = dt_util.as_local(point.start)
+        if retain_start <= local_start < retain_end:
+            merged[point.start] = point
+
+    for point in updates:
+        local_start = dt_util.as_local(point.start)
+        if not (retain_start <= local_start < retain_end):
+            continue
+        if local_start <= now_local and point.start in merged:
+            continue
+        merged[point.start] = point
+
+    return [merged[key] for key in sorted(merged)]
+
+
 def _load_history_states(
     hass: HomeAssistant,
     entity_id: str,

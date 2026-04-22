@@ -45,6 +45,8 @@ _build_forecast_from_states = load_forecast._build_forecast_from_states
 PROFILE_WEEKEND_HOLIDAY = load_forecast.PROFILE_WEEKEND_HOLIDAY
 PROFILE_WORKDAY = load_forecast.PROFILE_WORKDAY
 _day_profile = load_forecast._day_profile
+ForecastPoint = load_forecast.ForecastPoint
+merge_forecast_history = load_forecast.merge_forecast_history
 
 
 def _state(when: datetime, kw: float, unit: str = "W"):
@@ -165,3 +167,46 @@ def test_forecast_uses_entity_unit_for_small_watt_history_values() -> None:
     )
 
     assert points[0].load_kw < 0.05
+
+
+def test_merge_forecast_history_preserves_past_points_and_refreshes_future() -> None:
+    now = datetime(2026, 4, 21, 12, 0, tzinfo=timezone.utc)
+    existing = [
+        ForecastPoint(
+            start=datetime(2026, 4, 21, 8, 0, tzinfo=timezone.utc),
+            load_kw=2.0,
+            source="old",
+            samples=3,
+        ),
+        ForecastPoint(
+            start=datetime(2026, 4, 21, 13, 0, tzinfo=timezone.utc),
+            load_kw=2.5,
+            source="old",
+            samples=3,
+        ),
+    ]
+    updates = [
+        ForecastPoint(
+            start=datetime(2026, 4, 21, 8, 0, tzinfo=timezone.utc),
+            load_kw=1.0,
+            source="new",
+            samples=4,
+        ),
+        ForecastPoint(
+            start=datetime(2026, 4, 21, 13, 0, tzinfo=timezone.utc),
+            load_kw=3.0,
+            source="new",
+            samples=4,
+        ),
+    ]
+
+    merged = merge_forecast_history(existing, updates, now)
+
+    assert [point.start for point in merged] == [
+        datetime(2026, 4, 21, 8, 0, tzinfo=timezone.utc),
+        datetime(2026, 4, 21, 13, 0, tzinfo=timezone.utc),
+    ]
+    assert merged[0].load_kw == 2.0
+    assert merged[0].source == "old"
+    assert merged[1].load_kw == 3.0
+    assert merged[1].source == "new"

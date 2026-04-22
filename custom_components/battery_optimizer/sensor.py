@@ -497,6 +497,7 @@ def _price_comparison_day(coordinator: BatteryOptimizerCoordinator, day_key: str
 
 
 def _load_forecast_attrs(coordinator: BatteryOptimizerCoordinator) -> dict[str, Any]:
+    points = coordinator.load_forecast_history or coordinator.load_forecast
     return {
         "forecast": [
             {
@@ -510,9 +511,9 @@ def _load_forecast_attrs(coordinator: BatteryOptimizerCoordinator) -> dict[str, 
                 "current_load_kw": point.current_load_kw,
                 "adaptive_bias_kw": point.adaptive_bias_kw,
             }
-            for point in coordinator.load_forecast[:48]
+            for point in points[:96]
         ],
-        "method": "Forecast first averages recorder history into one value per day and optimizer interval, then prefers weekday-interval history, then workday/weekend-holiday profile history, blends with a rolling recent trend when available, and falls back to current load if history is too thin.",
+        "method": "Forecast first averages recorder history into one value per day and optimizer interval, then prefers weekday-interval history, then workday/weekend-holiday profile history, blends with a rolling recent trend when available, and falls back to current load if history is too thin. Today's and tomorrow's published forecast series is retained across updates so it can be compared visually against actual load throughout the day.",
     }
 
 
