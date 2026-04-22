@@ -107,12 +107,15 @@ ingestion_module.build_price_comparison = lambda hass, entity_id: {}
 
 _load_module("custom_components.battery_optimizer.const", BASE / "const.py")
 optimizer = _load_module("custom_components.battery_optimizer.optimizer", BASE / "optimizer.py")
+adaptive = _load_module("custom_components.battery_optimizer.adaptive", BASE / "adaptive.py")
 _load_module("custom_components.battery_optimizer.power", BASE / "power.py")
 sensor = _load_module("custom_components.battery_optimizer.sensor", BASE / "sensor.py")
 
 BatteryMode = optimizer.BatteryMode
 PlanInterval = optimizer.PlanInterval
+BatteryConstraints = optimizer.BatteryConstraints
 _current_projected_soc_point = sensor._current_projected_soc_point
+_command_target_soc_points_for_day = sensor._command_target_soc_points_for_day
 
 
 def _plan(mode: BatteryMode, projected_soc: float, target_power_kw: float) -> PlanInterval:
@@ -173,3 +176,80 @@ def test_current_projected_soc_uses_planned_target_when_window_not_locked() -> N
     assert point["target_power_kw"] == 1.8
     assert point["mode"] == BatteryMode.CHARGE.value
     assert point["source"] == "planned_interval"
+
+
+def test_command_target_soc_points_include_active_and_future_targets() -> None:
+    constraints = BatteryConstraints(
+        capacity_kwh=32.14,
+        soc_percent=35.0,
+        reserve_soc_percent=10,
+        preferred_max_soc_percent=90,
+        hard_max_soc_percent=100,
+        max_charge_kw=3.0,
+        max_discharge_kw=3.0,
+        charge_efficiency=0.95,
+        discharge_efficiency=0.95,
+        degradation_cost_per_kwh=0.01,
+        grid_fee_per_kwh=0.773,
+        interval_minutes=60,
+        min_dwell_intervals=0,
+        price_hysteresis=0.01,
+        very_cheap_spot_price=0.1,
+        cheap_effective_price=1.5,
+        expensive_effective_price=2.5,
+        optimizer_aggressiveness="balanced",
+    )
+    current_state = SimpleNamespace(state="35.0")
+    applied_plan = _plan(BatteryMode.CHARGE, projected_soc=38.0, target_power_kw=3.0)
+    future_charge = PlanInterval(
+        start=datetime(2026, 4, 21, 13, 0, tzinfo=timezone.utc),
+        mode=BatteryMode.CHARGE,
+        target_power_kw=3.0,
+        projected_soc_percent=42.0,
+        price=0.8,
+        load_kw=2.0,
+        grid_import_without_battery_kwh=2.0,
+        grid_import_with_battery_kwh=0.5,
+        cost_without_battery=3.0,
+        cost_with_battery=0.75,
+        electricity_savings=2.25,
+        degradation_cost=0.0,
+        net_value=2.25,
+        reason="test",
+    )
+    expensive_later = PlanInterval(
+        start=datetime(2026, 4, 21, 14, 0, tzinfo=timezone.utc),
+        mode=BatteryMode.HOLD,
+        target_power_kw=0.0,
+        projected_soc_percent=42.0,
+        price=3.5,
+        load_kw=2.0,
+        grid_import_without_battery_kwh=2.0,
+        grid_import_with_battery_kwh=0.5,
+        cost_without_battery=3.0,
+        cost_with_battery=0.75,
+        electricity_savings=2.25,
+        degradation_cost=0.0,
+        net_value=2.25,
+        reason="expensive later",
+    )
+    coordinator = SimpleNamespace(
+        last_command_target_soc=90.0,
+        _applied_snapshot=SimpleNamespace(mode=BatteryMode.CHARGE),
+        _applied_plan=applied_plan,
+        data=SimpleNamespace(intervals=[future_charge, expensive_later]),
+        _last_input_constraints=constraints,
+        adaptive_state=adaptive.AdaptiveState(),
+        config={"battery_soc_entity": "sensor.inverter_battery"},
+        hass=SimpleNamespace(
+            states=SimpleNamespace(
+                get=lambda entity_id: current_state if entity_id == "sensor.inverter_battery" else None
+            )
+        ),
+    )
+
+    points = _command_target_soc_points_for_day(coordinator, "today")
+
+    assert points[0]["command_target_soc_percent"] == 90
+    assert points[0]["source"] == "active_command"
+    assert points[1]["command_target_soc_percent"] >= 90

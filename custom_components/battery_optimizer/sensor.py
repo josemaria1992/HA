@@ -14,6 +14,7 @@ from homeassistant.helpers.entity_platform import AddEntitiesCallback
 from homeassistant.helpers.update_coordinator import CoordinatorEntity
 from homeassistant.util import dt as dt_util
 
+from .adaptive import compute_command_targets
 from .const import ATTR_PLAN, ATTR_REASONS, ATTR_WINDOWS, DOMAIN
 from .coordinator import BatteryOptimizerCoordinator, get_coordinator
 from .ingestion import build_price_comparison
@@ -596,6 +597,7 @@ def _day_projected_soc_attrs(coordinator: BatteryOptimizerCoordinator, day_key: 
     return {
         "date": _target_day(coordinator, day_key).isoformat(),
         "projected_soc": _projected_soc_points_for_day(coordinator, day_key),
+        "command_target_soc": _command_target_soc_points_for_day(coordinator, day_key),
         "note": "Projected SOC is the expected SOC after each planned interval for the selected day.",
     }
 
@@ -628,6 +630,57 @@ def _projected_soc_points_for_day(coordinator: BatteryOptimizerCoordinator, day_
                 "price": interval.price,
             }
         )
+    return points
+
+
+def _command_target_soc_points_for_day(coordinator: BatteryOptimizerCoordinator, day_key: str) -> list[dict[str, Any]]:
+    target_day = _target_day(coordinator, day_key)
+    points: list[dict[str, Any]] = []
+    now = dt_util.now()
+
+    current_target_soc = coordinator.last_command_target_soc
+    current_mode = coordinator._applied_snapshot.mode.value if coordinator._applied_snapshot is not None else None
+    current_price = coordinator._applied_plan.price if coordinator._applied_plan is not None else None
+    if day_key == "today" and current_target_soc is not None:
+        points.append(
+            {
+                "time": now.isoformat(),
+                "command_target_soc_percent": _display_soc(current_target_soc),
+                "mode": current_mode,
+                "price": current_price,
+                "source": "active_command",
+            }
+        )
+
+    if not coordinator.data or not coordinator.data.intervals or coordinator._last_input_constraints is None:
+        return points
+
+    intervals = coordinator.data.intervals
+    actual_soc = _current_actual_soc_percent(coordinator)
+    running_soc = actual_soc if actual_soc is not None else intervals[0].projected_soc_percent
+    for index, interval in enumerate(intervals):
+        local_start = dt_util.as_local(interval.start)
+        if local_start.date() != target_day:
+            continue
+        if day_key == "today" and points and local_start <= now:
+            running_soc = interval.projected_soc_percent
+            continue
+        command_targets = compute_command_targets(
+            intervals[index:],
+            coordinator._last_input_constraints,
+            running_soc,
+            coordinator.adaptive_state,
+        )
+        points.append(
+            {
+                "time": local_start.isoformat(),
+                "command_target_soc_percent": _display_soc(command_targets.target_soc_percent),
+                "mode": interval.mode.value,
+                "price": interval.price,
+                "source": "planned_command",
+            }
+        )
+        running_soc = interval.projected_soc_percent
     return points
 
 
@@ -671,6 +724,19 @@ def _current_projected_soc_point(coordinator: BatteryOptimizerCoordinator) -> di
         }
 
     return {}
+
+
+def _current_actual_soc_percent(coordinator: BatteryOptimizerCoordinator) -> float | None:
+    entity_id = coordinator.config.get("battery_soc_entity")
+    if not entity_id:
+        return None
+    state = coordinator.hass.states.get(entity_id)
+    if state is None or state.state in {"unknown", "unavailable", ""}:
+        return None
+    try:
+        return float(state.state)
+    except ValueError:
+        return None
 
 
 def _target_day(coordinator: BatteryOptimizerCoordinator, day_key: str):
