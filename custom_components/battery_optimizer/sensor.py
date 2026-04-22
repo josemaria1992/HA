@@ -604,22 +604,23 @@ def _day_projected_soc_attrs(coordinator: BatteryOptimizerCoordinator, day_key: 
 
 def _projected_soc_points_for_day(coordinator: BatteryOptimizerCoordinator, day_key: str) -> list[dict[str, Any]]:
     target_day = _target_day(coordinator, day_key)
+    retained = _filter_retained_points_for_day(
+        getattr(coordinator, "projected_soc_history", []),
+        target_day,
+        "projected_soc_percent",
+    )
+    if retained:
+        return retained
     points: list[dict[str, Any]] = []
-    now = dt_util.now()
-
     if day_key == "today":
         current_point = _current_projected_soc_point(coordinator)
         if current_point:
             points.append(current_point)
-
     if not coordinator.data:
         return points
-
     for interval in coordinator.data.intervals:
         local_start = dt_util.as_local(interval.start)
         if local_start.date() != target_day:
-            continue
-        if day_key == "today" and points and local_start <= now:
             continue
         points.append(
             {
@@ -635,6 +636,13 @@ def _projected_soc_points_for_day(coordinator: BatteryOptimizerCoordinator, day_
 
 def _command_target_soc_points_for_day(coordinator: BatteryOptimizerCoordinator, day_key: str) -> list[dict[str, Any]]:
     target_day = _target_day(coordinator, day_key)
+    retained = _filter_retained_points_for_day(
+        getattr(coordinator, "command_target_soc_history", []),
+        target_day,
+        "command_target_soc_percent",
+    )
+    if retained:
+        return retained
     points: list[dict[str, Any]] = []
     now = dt_util.now()
 
@@ -661,9 +669,6 @@ def _command_target_soc_points_for_day(coordinator: BatteryOptimizerCoordinator,
     for index, interval in enumerate(intervals):
         local_start = dt_util.as_local(interval.start)
         if local_start.date() != target_day:
-            continue
-        if day_key == "today" and points and local_start <= now:
-            running_soc = interval.projected_soc_percent
             continue
         command_targets = compute_command_targets(
             intervals[index:],
@@ -737,6 +742,26 @@ def _current_actual_soc_percent(coordinator: BatteryOptimizerCoordinator) -> flo
         return float(state.state)
     except ValueError:
         return None
+
+
+def _filter_retained_points_for_day(
+    points: list[dict[str, Any]],
+    target_day,
+    value_key: str,
+) -> list[dict[str, Any]]:
+    filtered: list[dict[str, Any]] = []
+    for point in points:
+        raw_time = point.get("time")
+        if not isinstance(raw_time, str):
+            continue
+        parsed = dt_util.parse_datetime(raw_time)
+        if parsed is None:
+            continue
+        local = dt_util.as_local(parsed)
+        if local.date() != target_day or value_key not in point:
+            continue
+        filtered.append(point)
+    return filtered
 
 
 def _target_day(coordinator: BatteryOptimizerCoordinator, day_key: str):

@@ -97,6 +97,8 @@ class BatteryOptimizerCoordinator(DataUpdateCoordinator[OptimizationResult | Non
         self.cost_tracking_status = "Waiting for first runtime sample."
         self.load_forecast: list[ForecastPoint] = []
         self.load_forecast_history: list[ForecastPoint] = []
+        self.projected_soc_history: list[dict[str, Any]] = []
+        self.command_target_soc_history: list[dict[str, Any]] = []
         self._last_daily_sample: datetime | None = None
         self._store = Store[dict[str, Any]](hass, STORE_VERSION, f"{DOMAIN}_{entry.entry_id}_daily")
         self._previous_mode: BatteryMode | None = None
@@ -249,6 +251,7 @@ class BatteryOptimizerCoordinator(DataUpdateCoordinator[OptimizationResult | Non
                 if result.intervals
                 else "Advisory-only mode: no valid interval to apply."
             )
+        self._refresh_day_series_histories(result)
         return result
 
     async def async_apply_current_plan(self) -> str:
@@ -826,6 +829,21 @@ class BatteryOptimizerCoordinator(DataUpdateCoordinator[OptimizationResult | Non
             for point in input_data.load_forecast
         ]
 
+    def _refresh_day_series_histories(self, result: OptimizationResult | None) -> None:
+        now = dt_util.now()
+        projected_updates = _build_projected_soc_updates(self, result, now)
+        command_updates = _build_command_target_updates(self, result, now)
+        self.projected_soc_history = _merge_time_series_history(
+            self.projected_soc_history,
+            projected_updates,
+            now,
+        )
+        self.command_target_soc_history = _merge_time_series_history(
+            self.command_target_soc_history,
+            command_updates,
+            now,
+        )
+
 
 def get_coordinator(hass: HomeAssistant, entry: ConfigEntry) -> BatteryOptimizerCoordinator:
     return hass.data[DOMAIN][entry.entry_id]
@@ -1105,3 +1123,138 @@ def _max_phase_current(hass: HomeAssistant, entity_ids: list[str]) -> float | No
 def _control_window_start(moment: datetime, interval_minutes: int) -> datetime:
     bucket = (moment.minute // interval_minutes) * interval_minutes
     return moment.replace(minute=bucket, second=0, microsecond=0)
+
+
+def _build_projected_soc_updates(
+    coordinator: BatteryOptimizerCoordinator,
+    result: OptimizationResult | None,
+    now: datetime,
+) -> list[dict[str, Any]]:
+    if result is None or not result.intervals:
+        return []
+    updates: list[dict[str, Any]] = []
+    current_interval = result.intervals[0]
+    current_time = dt_util.as_local(current_interval.start).isoformat()
+    current_mode = coordinator._applied_snapshot.mode.value if coordinator._applied_snapshot is not None else current_interval.mode.value
+    current_target_power_kw = (
+        coordinator.last_command_target_power_kw
+        if coordinator._is_control_window_locked() and coordinator.last_command_target_power_kw is not None
+        else current_interval.target_power_kw
+    )
+    current_soc = (
+        coordinator._applied_plan.projected_soc_percent
+        if coordinator._is_control_window_locked() and coordinator._applied_plan is not None
+        else current_interval.projected_soc_percent
+    )
+    updates.append(
+        {
+            "time": current_time,
+            "projected_soc_percent": int(round(current_soc)),
+            "mode": current_mode,
+            "target_power_kw": current_target_power_kw,
+            "price": current_interval.price,
+            "source": "active_command" if coordinator._is_control_window_locked() else "planned_interval",
+        }
+    )
+    for interval in result.intervals[1:]:
+        updates.append(
+            {
+                "time": dt_util.as_local(interval.start).isoformat(),
+                "projected_soc_percent": int(round(interval.projected_soc_percent)),
+                "mode": interval.mode.value,
+                "target_power_kw": interval.target_power_kw,
+                "price": interval.price,
+                "source": "planned_interval",
+            }
+        )
+    return updates
+
+
+def _build_command_target_updates(
+    coordinator: BatteryOptimizerCoordinator,
+    result: OptimizationResult | None,
+    now: datetime,
+) -> list[dict[str, Any]]:
+    if result is None or not result.intervals:
+        return []
+    updates: list[dict[str, Any]] = []
+    current_interval = result.intervals[0]
+    current_time = dt_util.as_local(current_interval.start).isoformat()
+    current_target_soc = coordinator.last_command_target_soc
+    current_mode = coordinator._applied_snapshot.mode.value if coordinator._applied_snapshot is not None else current_interval.mode.value
+    if current_target_soc is None:
+        current_target_soc = coordinator.planned_command_target_soc
+        current_mode = current_interval.mode.value
+    if current_target_soc is not None:
+        updates.append(
+            {
+                "time": current_time,
+                "command_target_soc_percent": int(round(current_target_soc)),
+                "mode": current_mode,
+                "price": current_interval.price,
+                "source": "active_command" if coordinator.last_command_target_soc is not None else "planned_command",
+            }
+        )
+
+    if coordinator._last_input_constraints is None:
+        return updates
+
+    actual_soc = _read_number(coordinator.hass, coordinator.config.get(CONF_BATTERY_SOC_ENTITY))
+    running_soc = actual_soc if actual_soc is not None else result.intervals[0].projected_soc_percent
+    for index, interval in enumerate(result.intervals):
+        if index == 0:
+            running_soc = interval.projected_soc_percent
+            continue
+        command_targets = compute_command_targets(
+            result.intervals[index:],
+            coordinator._last_input_constraints,
+            running_soc,
+            coordinator.adaptive_state,
+        )
+        updates.append(
+            {
+                "time": dt_util.as_local(interval.start).isoformat(),
+                "command_target_soc_percent": int(round(command_targets.target_soc_percent)),
+                "mode": interval.mode.value,
+                "price": interval.price,
+                "source": "planned_command",
+            }
+        )
+        running_soc = interval.projected_soc_percent
+    return updates
+
+
+def _merge_time_series_history(
+    existing: list[dict[str, Any]],
+    updates: list[dict[str, Any]],
+    now: datetime,
+    retain_days: int = 2,
+) -> list[dict[str, Any]]:
+    now_local = dt_util.as_local(now)
+    retain_start = now_local.replace(hour=0, minute=0, second=0, microsecond=0)
+    retain_end = retain_start + timedelta(days=retain_days)
+    merged: dict[datetime, dict[str, Any]] = {}
+
+    def _point_time(point: dict[str, Any]) -> datetime | None:
+        raw = point.get("time")
+        if not isinstance(raw, str):
+            return None
+        parsed = dt_util.parse_datetime(raw)
+        if parsed is None:
+            return None
+        return dt_util.as_local(parsed)
+
+    for point in existing:
+        parsed = _point_time(point)
+        if parsed is not None and retain_start <= parsed < retain_end:
+            merged[parsed] = point
+
+    for point in updates:
+        parsed = _point_time(point)
+        if parsed is None or not (retain_start <= parsed < retain_end):
+            continue
+        if parsed <= now_local and parsed in merged:
+            continue
+        merged[parsed] = point
+
+    return [merged[key] for key in sorted(merged)]
