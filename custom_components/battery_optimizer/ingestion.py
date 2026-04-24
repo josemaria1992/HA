@@ -48,6 +48,8 @@ from .const import (
     DEFAULT_FORECAST_RELIABILITY_MAX_RELATIVE_MAE,
     DEFAULT_FORECAST_RELIABILITY_MIN_SAMPLES,
     DEFAULT_GRID_FEE_PER_KWH,
+    DEFAULT_SOLARMAN_MAX_CHARGING_CURRENT_A,
+    DEFAULT_SOLARMAN_MAX_DISCHARGING_CURRENT_A,
     DEFAULT_VERY_CHEAP_SPOT_PRICE,
 )
 from .optimizer import BatteryConstraints, LoadPoint, OptimizationInput, PricePoint
@@ -103,6 +105,7 @@ class DataIngestor:
             self.config.get(CONF_MAX_CHARGE_POWER_KW),
             reasons,
             "max charging current",
+            DEFAULT_SOLARMAN_MAX_CHARGING_CURRENT_A,
         )
         max_discharge_kw = self._read_power_limit_kw(
             self.config.get(CONF_MAX_DISCHARGING_CURRENT_NUMBER),
@@ -110,6 +113,7 @@ class DataIngestor:
             self.config.get(CONF_MAX_DISCHARGE_POWER_KW),
             reasons,
             "max discharging current",
+            DEFAULT_SOLARMAN_MAX_DISCHARGING_CURRENT_A,
         )
 
         constraints = BatteryConstraints(
@@ -236,11 +240,11 @@ class DataIngestor:
         fallback_kw: Any,
         reasons: list[str],
         label: str,
+        hardware_max_current_a: float,
     ) -> float:
         if current_entity_id:
-            current_a = self._read_float_state(current_entity_id, reasons, label)
-            if current_a is not None and current_a > 0 and voltage > 0:
-                return current_a * voltage / 1000
+            if voltage > 0 and hardware_max_current_a > 0:
+                return hardware_max_current_a * voltage / 1000
         try:
             value = float(fallback_kw)
         except (TypeError, ValueError):
