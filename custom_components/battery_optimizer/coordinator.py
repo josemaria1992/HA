@@ -37,6 +37,8 @@ from .costs import (
 from .const import (
     CONF_ADVISORY_ONLY,
     CONF_BATTERY_SOC_ENTITY,
+    DEFAULT_DISCHARGE_CURRENT_IMMEDIATE_DELTA_A,
+    DEFAULT_DISCHARGE_CURRENT_TUNING_INTERVAL_MINUTES,
     CONF_FORECAST_RELIABILITY_MAX_RELATIVE_MAE,
     CONF_FORECAST_RELIABILITY_MIN_SAMPLES,
     CONF_GRID_FEE_PER_KWH,
@@ -601,22 +603,69 @@ class BatteryOptimizerCoordinator(DataUpdateCoordinator[OptimizationResult | Non
         if max_phase_current is not None and max_phase_current >= emergency_threshold:
             return "current_only", f"Immediate current-only update because phase current reached {max_phase_current:.1f}A."
 
+        planned_snapshot = self.backend.snapshot_for_plan(
+            result.intervals[0],
+            command_target_soc=command_targets.target_soc_percent if command_targets is not None else None,
+            command_power_kw=command_targets.target_power_kw if command_targets is not None else None,
+        )
+
         if self._last_full_device_write is None:
             return "full", "Initial inverter write."
 
         if self._invalid_fallback_active:
             return "full", "Data recovered after fallback hold; applying planned command immediately."
 
+        discharge_tuning_reason = self._discharge_current_tuning_reason(now, planned_snapshot)
+
         if signature == self._last_write_signature:
+            if discharge_tuning_reason is not None:
+                return "current_only", discharge_tuning_reason
             return "skip", "Plan unchanged; preserving inverter settings to reduce writes."
 
         current_window = _control_window_start(now, DEFAULT_COMMAND_WRITE_INTERVAL_MINUTES)
         last_window = _control_window_start(self._last_full_device_write, DEFAULT_COMMAND_WRITE_INTERVAL_MINUTES)
         if current_window <= last_window:
+            if discharge_tuning_reason is not None:
+                return "current_only", discharge_tuning_reason
             next_write_at = current_window + timedelta(minutes=DEFAULT_COMMAND_WRITE_INTERVAL_MINUTES)
             return "skip", f"Plan changed, but next regular inverter update is after {next_write_at.strftime('%H:%M')}."
 
         return "full", "Regular 30-minute inverter update."
+
+    def _discharge_current_tuning_reason(
+        self,
+        now: datetime,
+        planned_snapshot: CommandSnapshot,
+    ) -> str | None:
+        if not self._is_control_window_locked():
+            return None
+        if self._applied_snapshot is None or self._applied_plan is None:
+            return None
+        if self._applied_snapshot.mode is not BatteryMode.DISCHARGE:
+            return None
+        if planned_snapshot.mode is not BatteryMode.DISCHARGE:
+            return None
+
+        current_amps = self._applied_snapshot.max_discharge_current_a
+        desired_amps = planned_snapshot.max_discharge_current_a
+        delta_amps = abs(desired_amps - current_amps)
+        if delta_amps < 0.5:
+            return None
+        if delta_amps >= DEFAULT_DISCHARGE_CURRENT_IMMEDIATE_DELTA_A:
+            return (
+                f"Immediate current-only discharge retune: "
+                f"{current_amps:.1f}A -> {desired_amps:.1f}A because the required current changed by {delta_amps:.1f}A."
+            )
+        if not _current_tuning_due(
+            now,
+            self._last_device_write,
+            DEFAULT_DISCHARGE_CURRENT_TUNING_INTERVAL_MINUTES,
+        ):
+            return None
+        return (
+            f"15-minute current-only discharge retune: "
+            f"{current_amps:.1f}A -> {desired_amps:.1f}A."
+        )
 
     def _update_adaptive_state_if_interval_advanced(self, current_interval_start: datetime | None) -> None:
         if current_interval_start is None or self._last_interval_snapshot is None:
@@ -690,11 +739,13 @@ class BatteryOptimizerCoordinator(DataUpdateCoordinator[OptimizationResult | Non
         )
 
     def _current_only_power_kw(self, current_only_plan: PlanInterval, planned_power_kw: float | None) -> float | None:
-        if not self._is_control_window_locked():
-            return planned_power_kw
-        if self._applied_snapshot is None or self._applied_snapshot.mode is BatteryMode.HOLD:
-            return planned_power_kw
-        return self.last_command_target_power_kw if self.last_command_target_power_kw is not None else current_only_plan.target_power_kw
+        return _current_only_power_target(
+            is_control_window_locked=self._is_control_window_locked(),
+            applied_mode=self._applied_snapshot.mode if self._applied_snapshot is not None else None,
+            last_command_target_power_kw=self.last_command_target_power_kw,
+            current_only_plan_target_power_kw=current_only_plan.target_power_kw,
+            planned_power_kw=planned_power_kw,
+        )
 
     def _is_control_window_locked(self) -> bool:
         if self._last_full_device_write is None or self._applied_plan is None:
@@ -1123,6 +1174,35 @@ def _max_phase_current(hass: HomeAssistant, entity_ids: list[str]) -> float | No
 def _control_window_start(moment: datetime, interval_minutes: int) -> datetime:
     bucket = (moment.minute // interval_minutes) * interval_minutes
     return moment.replace(minute=bucket, second=0, microsecond=0)
+
+
+def _current_tuning_due(
+    now: datetime,
+    last_write: datetime | None,
+    interval_minutes: int,
+) -> bool:
+    if last_write is None:
+        return True
+    return _control_window_start(now, interval_minutes) > _control_window_start(last_write, interval_minutes)
+
+
+def _current_only_power_target(
+    *,
+    is_control_window_locked: bool,
+    applied_mode: BatteryMode | None,
+    last_command_target_power_kw: float | None,
+    current_only_plan_target_power_kw: float,
+    planned_power_kw: float | None,
+) -> float | None:
+    if not is_control_window_locked:
+        return planned_power_kw
+    if applied_mode is None or applied_mode is BatteryMode.HOLD:
+        return planned_power_kw
+    if applied_mode is BatteryMode.DISCHARGE and planned_power_kw is not None:
+        return planned_power_kw
+    if last_command_target_power_kw is not None:
+        return last_command_target_power_kw
+    return current_only_plan_target_power_kw
 
 
 def _build_projected_soc_updates(
