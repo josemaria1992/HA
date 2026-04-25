@@ -368,9 +368,8 @@ class SolarmanBackend:
         amps = max(target_kw * 1000 / max(voltage, 1), 0.0)
         if amps <= 0.0:
             return 0.0
-        min_amps = self._minimum_discharge_current_amps(voltage)
         return min(
-            max(amps, min_amps),
+            max(amps, DEFAULT_SOLARMAN_MIN_DISCHARGING_CURRENT_A),
             DEFAULT_SOLARMAN_MAX_DISCHARGING_CURRENT_A,
         )
 
@@ -379,17 +378,6 @@ class SolarmanBackend:
         if live_load_kw is None:
             return max(target_kw, 0.0)
         return max(min(target_kw, live_load_kw), 0.0)
-
-    def _minimum_discharge_current_amps(self, voltage: float) -> float:
-        live_load_kw = self._live_load_kw()
-        if live_load_kw is None:
-            return 0.0
-        available_amps = max(live_load_kw * 1000 / max(voltage, 1), 0.0)
-        return min(
-            DEFAULT_SOLARMAN_MIN_DISCHARGING_CURRENT_A,
-            available_amps,
-            DEFAULT_SOLARMAN_MAX_DISCHARGING_CURRENT_A,
-        )
 
     def _charge_target_soc(self, plan: PlanInterval, current_soc: float) -> float:
         return min(max(plan.projected_soc_percent, current_soc + 1.0), 100.0)
