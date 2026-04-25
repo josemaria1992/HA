@@ -303,7 +303,14 @@ class BatteryOptimizerCoordinator(DataUpdateCoordinator[OptimizationResult | Non
                 return apply_reason
             if apply_kind == "current_only":
                 current_only_plan = self._current_only_plan(result.intervals[0])
-                current_only_power_kw = self._current_only_power_kw(current_only_plan, target_power_kw)
+                tuning_targets = self._build_command_targets(
+                    result,
+                    write_interval_minutes=DEFAULT_CURRENT_TUNING_INTERVAL_MINUTES,
+                )
+                tuning_power_kw = (
+                    tuning_targets.target_power_kw if tuning_targets is not None else target_power_kw
+                )
+                current_only_power_kw = self._current_only_power_kw(current_only_plan, tuning_power_kw)
                 if (
                     self._is_control_window_locked()
                     and self._applied_plan is not None
@@ -604,11 +611,7 @@ class BatteryOptimizerCoordinator(DataUpdateCoordinator[OptimizationResult | Non
         if max_phase_current is not None and max_phase_current >= emergency_threshold:
             return "current_only", f"Immediate current-only update because phase current reached {max_phase_current:.1f}A."
 
-        planned_snapshot = self.backend.snapshot_for_plan(
-            result.intervals[0],
-            command_target_soc=command_targets.target_soc_percent if command_targets is not None else None,
-            command_power_kw=command_targets.target_power_kw if command_targets is not None else None,
-        )
+        planned_snapshot = self._build_current_tuning_snapshot(result, command_targets)
 
         if self._last_full_device_write is None:
             return "full", "Initial inverter write."
@@ -660,7 +663,11 @@ class BatteryOptimizerCoordinator(DataUpdateCoordinator[OptimizationResult | Non
             return
         self._last_interval_snapshot = build_interval_snapshot(result.intervals[0], start_soc_percent)
 
-    def _build_command_targets(self, result: OptimizationResult):
+    def _build_command_targets(
+        self,
+        result: OptimizationResult,
+        write_interval_minutes: int = DEFAULT_COMMAND_WRITE_INTERVAL_MINUTES,
+    ):
         if not result.intervals or self._last_input_constraints is None:
             return None
         current_soc = _read_number(self.hass, self.config.get(CONF_BATTERY_SOC_ENTITY))
@@ -671,7 +678,7 @@ class BatteryOptimizerCoordinator(DataUpdateCoordinator[OptimizationResult | Non
             self._last_input_constraints,
             current_soc,
             self.adaptive_state,
-            DEFAULT_CURRENT_TUNING_INTERVAL_MINUTES,
+            write_interval_minutes,
         )
 
     def _current_only_plan(self, planned_interval: PlanInterval) -> PlanInterval:
@@ -755,6 +762,29 @@ class BatteryOptimizerCoordinator(DataUpdateCoordinator[OptimizationResult | Non
         return (
             f"15-minute current-only tuning: {current_label} current "
             f"{previous_amps:.1f}A -> {desired_amps:.1f}A."
+        )
+
+    def _build_current_tuning_snapshot(
+        self,
+        result: OptimizationResult,
+        strategic_targets,
+    ) -> CommandSnapshot:
+        tuning_targets = self._build_command_targets(
+            result,
+            write_interval_minutes=DEFAULT_CURRENT_TUNING_INTERVAL_MINUTES,
+        )
+        tuning_power_kw = (
+            tuning_targets.target_power_kw
+            if tuning_targets is not None
+            else strategic_targets.target_power_kw if strategic_targets is not None else None
+        )
+        strategic_target_soc = (
+            strategic_targets.target_soc_percent if strategic_targets is not None else None
+        )
+        return self.backend.snapshot_for_plan(
+            result.intervals[0],
+            command_target_soc=strategic_target_soc,
+            command_power_kw=tuning_power_kw,
         )
 
     async def _async_reconcile_if_needed(self, skipped_reason: str) -> str | None:
