@@ -75,3 +75,39 @@ def test_charge_current_uses_hardware_limit_not_live_actuator_setting() -> None:
     amps = solarman._charge_current_amps(7.68)
 
     assert round(amps, 1) == 150.0
+
+
+def test_discharge_current_has_50a_floor_when_live_load_can_absorb_it() -> None:
+    states = {
+        "sensor.battery_voltage": SimpleNamespace(state="51.2", attributes={"unit_of_measurement": "V"}),
+        "sensor.load_power": SimpleNamespace(state="4000", attributes={"unit_of_measurement": "W"}),
+    }
+    hass = SimpleNamespace(states=SimpleNamespace(get=lambda entity_id: states.get(entity_id)))
+    config = {
+        "battery_voltage_entity": "sensor.battery_voltage",
+        "load_power_entity": "sensor.load_power",
+    }
+
+    solarman = SolarmanBackend(hass, config)
+
+    amps = solarman._discharge_current_amps(1.0)
+
+    assert round(amps, 1) == 50.0
+
+
+def test_discharge_current_stays_below_50a_when_live_load_is_too_low() -> None:
+    states = {
+        "sensor.battery_voltage": SimpleNamespace(state="51.2", attributes={"unit_of_measurement": "V"}),
+        "sensor.load_power": SimpleNamespace(state="1000", attributes={"unit_of_measurement": "W"}),
+    }
+    hass = SimpleNamespace(states=SimpleNamespace(get=lambda entity_id: states.get(entity_id)))
+    config = {
+        "battery_voltage_entity": "sensor.battery_voltage",
+        "load_power_entity": "sensor.load_power",
+    }
+
+    solarman = SolarmanBackend(hass, config)
+
+    amps = solarman._discharge_current_amps(1.0)
+
+    assert round(amps, 1) == round(1000 / 51.2, 1)
