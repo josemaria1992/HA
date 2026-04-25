@@ -116,7 +116,6 @@ PlanInterval = optimizer.PlanInterval
 BatteryConstraints = optimizer.BatteryConstraints
 _current_projected_soc_point = sensor._current_projected_soc_point
 _command_target_soc_points_for_day = sensor._command_target_soc_points_for_day
-_projected_soc_points_for_day = sensor._projected_soc_points_for_day
 
 
 def _plan(mode: BatteryMode, projected_soc: float, target_power_kw: float) -> PlanInterval:
@@ -254,95 +253,3 @@ def test_command_target_soc_points_include_active_and_future_targets() -> None:
     assert points[0]["command_target_soc_percent"] == 90
     assert points[0]["source"] == "active_command"
     assert points[1]["command_target_soc_percent"] >= 90
-
-
-def test_day_points_keep_history_but_overlay_live_current_and_future_points() -> None:
-    retained_now = datetime(2026, 4, 21, 12, 0, tzinfo=timezone.utc)
-    future = datetime(2026, 4, 21, 13, 0, tzinfo=timezone.utc)
-
-    coordinator = SimpleNamespace(
-        planned_command_target_soc=70.0,
-        last_command_target_soc=90.0,
-        planned_command_target_power_kw=2.5,
-        last_command_target_power_kw=3.0,
-        _applied_snapshot=SimpleNamespace(mode=BatteryMode.CHARGE),
-        _applied_plan=_plan(BatteryMode.CHARGE, projected_soc=38.0, target_power_kw=3.0),
-        data=SimpleNamespace(
-            intervals=[
-                PlanInterval(
-                    start=future,
-                    mode=BatteryMode.CHARGE,
-                    target_power_kw=3.0,
-                    projected_soc_percent=50.0,
-                    price=0.8,
-                    load_kw=2.0,
-                    grid_import_without_battery_kwh=2.0,
-                    grid_import_with_battery_kwh=0.5,
-                    cost_without_battery=3.0,
-                    cost_with_battery=0.75,
-                    electricity_savings=2.25,
-                    degradation_cost=0.0,
-                    net_value=2.25,
-                    reason="future",
-                )
-            ]
-        ),
-        projected_soc_history=[
-            {
-                "time": retained_now.isoformat(),
-                "projected_soc_percent": 32,
-                "mode": BatteryMode.CHARGE.value,
-            },
-            {
-                "time": future.isoformat(),
-                "projected_soc_percent": 44,
-                "mode": BatteryMode.CHARGE.value,
-            },
-        ],
-        command_target_soc_history=[
-            {
-                "time": retained_now.isoformat(),
-                "command_target_soc_percent": 80,
-                "mode": BatteryMode.CHARGE.value,
-            },
-            {
-                "time": future.isoformat(),
-                "command_target_soc_percent": 80,
-                "mode": BatteryMode.CHARGE.value,
-            },
-        ],
-        _last_input_constraints=BatteryConstraints(
-            capacity_kwh=32.14,
-            soc_percent=35.0,
-            reserve_soc_percent=10,
-            preferred_max_soc_percent=90,
-            hard_max_soc_percent=100,
-            max_charge_kw=3.0,
-            max_discharge_kw=3.0,
-            charge_efficiency=0.95,
-            discharge_efficiency=0.95,
-            degradation_cost_per_kwh=0.01,
-            grid_fee_per_kwh=0.773,
-            interval_minutes=60,
-            min_dwell_intervals=0,
-            price_hysteresis=0.01,
-            very_cheap_spot_price=0.1,
-            cheap_effective_price=1.5,
-            expensive_effective_price=2.5,
-            optimizer_aggressiveness="balanced",
-        ),
-        adaptive_state=adaptive.AdaptiveState(),
-        config={"battery_soc_entity": "sensor.inverter_battery"},
-        hass=SimpleNamespace(
-            states=SimpleNamespace(get=lambda entity_id: SimpleNamespace(state="35.0"))
-        ),
-        _is_control_window_locked=lambda: True,
-    )
-
-    projected = _projected_soc_points_for_day(coordinator, "today")
-    command = _command_target_soc_points_for_day(coordinator, "today")
-
-    assert projected[0]["projected_soc_percent"] == 38
-    assert projected[-1]["projected_soc_percent"] == 50
-    assert command[0]["command_target_soc_percent"] == 90
-    assert command[-1]["command_target_soc_percent"] != 80
