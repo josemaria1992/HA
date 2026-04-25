@@ -19,7 +19,7 @@ from .const import (
     ATTR_PLAN,
     ATTR_REASONS,
     ATTR_WINDOWS,
-    DEFAULT_CURRENT_TUNING_INTERVAL_MINUTES,
+    DEFAULT_COMMAND_WRITE_INTERVAL_MINUTES,
     DOMAIN,
 )
 from .coordinator import BatteryOptimizerCoordinator, get_coordinator
@@ -615,15 +615,13 @@ def _projected_soc_points_for_day(coordinator: BatteryOptimizerCoordinator, day_
         target_day,
         "projected_soc_percent",
     )
-    if retained:
-        return retained
     points: list[dict[str, Any]] = []
     if day_key == "today":
         current_point = _current_projected_soc_point(coordinator)
         if current_point:
             points.append(current_point)
     if not coordinator.data:
-        return points
+        return _combine_day_points(target_day, retained, points)
     for interval in coordinator.data.intervals:
         local_start = dt_util.as_local(interval.start)
         if local_start.date() != target_day:
@@ -637,7 +635,7 @@ def _projected_soc_points_for_day(coordinator: BatteryOptimizerCoordinator, day_
                 "price": interval.price,
             }
         )
-    return points
+    return _combine_day_points(target_day, retained, points)
 
 
 def _command_target_soc_points_for_day(coordinator: BatteryOptimizerCoordinator, day_key: str) -> list[dict[str, Any]]:
@@ -647,8 +645,6 @@ def _command_target_soc_points_for_day(coordinator: BatteryOptimizerCoordinator,
         target_day,
         "command_target_soc_percent",
     )
-    if retained:
-        return retained
     points: list[dict[str, Any]] = []
     now = dt_util.now()
 
@@ -667,7 +663,7 @@ def _command_target_soc_points_for_day(coordinator: BatteryOptimizerCoordinator,
         )
 
     if not coordinator.data or not coordinator.data.intervals or coordinator._last_input_constraints is None:
-        return points
+        return _combine_day_points(target_day, retained, points)
 
     intervals = coordinator.data.intervals
     actual_soc = _current_actual_soc_percent(coordinator)
@@ -681,7 +677,7 @@ def _command_target_soc_points_for_day(coordinator: BatteryOptimizerCoordinator,
             coordinator._last_input_constraints,
             running_soc,
             coordinator.adaptive_state,
-            DEFAULT_CURRENT_TUNING_INTERVAL_MINUTES,
+            DEFAULT_COMMAND_WRITE_INTERVAL_MINUTES,
         )
         points.append(
             {
@@ -693,7 +689,7 @@ def _command_target_soc_points_for_day(coordinator: BatteryOptimizerCoordinator,
             }
         )
         running_soc = interval.projected_soc_percent
-    return points
+    return _combine_day_points(target_day, retained, points)
 
 
 def _current_projected_soc_point(coordinator: BatteryOptimizerCoordinator) -> dict[str, Any]:
@@ -769,6 +765,41 @@ def _filter_retained_points_for_day(
             continue
         filtered.append(point)
     return filtered
+
+
+def _combine_day_points(
+    target_day,
+    retained: list[dict[str, Any]],
+    live_points: list[dict[str, Any]],
+) -> list[dict[str, Any]]:
+    now_local = dt_util.as_local(dt_util.now())
+    merged: dict[datetime, dict[str, Any]] = {}
+
+    for point in retained:
+        parsed = _point_time(point)
+        if parsed is None or parsed.date() != target_day:
+            continue
+        if target_day == now_local.date() and parsed >= now_local:
+            continue
+        merged[parsed] = point
+
+    for point in live_points:
+        parsed = _point_time(point)
+        if parsed is None or parsed.date() != target_day:
+            continue
+        merged[parsed] = point
+
+    return [merged[key] for key in sorted(merged)]
+
+
+def _point_time(point: dict[str, Any]) -> datetime | None:
+    raw_time = point.get("time")
+    if not isinstance(raw_time, str):
+        return None
+    parsed = dt_util.parse_datetime(raw_time)
+    if parsed is None:
+        return None
+    return dt_util.as_local(parsed)
 
 
 def _target_day(coordinator: BatteryOptimizerCoordinator, day_key: str):
