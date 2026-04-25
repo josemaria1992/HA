@@ -15,13 +15,7 @@ from homeassistant.helpers.update_coordinator import CoordinatorEntity
 from homeassistant.util import dt as dt_util
 
 from .adaptive import compute_command_targets
-from .const import (
-    ATTR_PLAN,
-    ATTR_REASONS,
-    ATTR_WINDOWS,
-    DEFAULT_CURRENT_TUNING_INTERVAL_MINUTES,
-    DOMAIN,
-)
+from .const import ATTR_PLAN, ATTR_REASONS, ATTR_WINDOWS, DOMAIN
 from .coordinator import BatteryOptimizerCoordinator, get_coordinator
 from .ingestion import build_price_comparison
 from .optimizer import BatteryMode
@@ -681,7 +675,6 @@ def _command_target_soc_points_for_day(coordinator: BatteryOptimizerCoordinator,
             coordinator._last_input_constraints,
             running_soc,
             coordinator.adaptive_state,
-            DEFAULT_CURRENT_TUNING_INTERVAL_MINUTES,
         )
         points.append(
             {

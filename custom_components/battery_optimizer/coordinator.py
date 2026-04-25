@@ -46,9 +46,6 @@ from .const import (
     CONF_PHASE_POWER_ENTITIES,
     CONF_PRICE_ENTITY,
     DEFAULT_COMMAND_WRITE_INTERVAL_MINUTES,
-    DEFAULT_CURRENT_TUNING_DEADBAND_A,
-    DEFAULT_CURRENT_TUNING_DEADBAND_RATIO,
-    DEFAULT_CURRENT_TUNING_INTERVAL_MINUTES,
     DEFAULT_EMERGENCY_PHASE_CURRENT_A,
     DEFAULT_FORECAST_RELIABILITY_MAX_RELATIVE_MAE,
     DEFAULT_FORECAST_RELIABILITY_MIN_SAMPLES,
@@ -604,29 +601,18 @@ class BatteryOptimizerCoordinator(DataUpdateCoordinator[OptimizationResult | Non
         if max_phase_current is not None and max_phase_current >= emergency_threshold:
             return "current_only", f"Immediate current-only update because phase current reached {max_phase_current:.1f}A."
 
-        planned_snapshot = self.backend.snapshot_for_plan(
-            result.intervals[0],
-            command_target_soc=command_targets.target_soc_percent if command_targets is not None else None,
-            command_power_kw=command_targets.target_power_kw if command_targets is not None else None,
-        )
-
         if self._last_full_device_write is None:
             return "full", "Initial inverter write."
 
         if self._invalid_fallback_active:
             return "full", "Data recovered after fallback hold; applying planned command immediately."
 
-        current_tuning_reason = self._current_tuning_reason(now, planned_snapshot)
         if signature == self._last_write_signature:
-            if current_tuning_reason is not None:
-                return "current_only", current_tuning_reason
             return "skip", "Plan unchanged; preserving inverter settings to reduce writes."
 
         current_window = _control_window_start(now, DEFAULT_COMMAND_WRITE_INTERVAL_MINUTES)
         last_window = _control_window_start(self._last_full_device_write, DEFAULT_COMMAND_WRITE_INTERVAL_MINUTES)
         if current_window <= last_window:
-            if current_tuning_reason is not None:
-                return "current_only", current_tuning_reason
             next_write_at = current_window + timedelta(minutes=DEFAULT_COMMAND_WRITE_INTERVAL_MINUTES)
             return "skip", f"Plan changed, but next regular inverter update is after {next_write_at.strftime('%H:%M')}."
 
@@ -671,7 +657,7 @@ class BatteryOptimizerCoordinator(DataUpdateCoordinator[OptimizationResult | Non
             self._last_input_constraints,
             current_soc,
             self.adaptive_state,
-            DEFAULT_CURRENT_TUNING_INTERVAL_MINUTES,
+            DEFAULT_COMMAND_WRITE_INTERVAL_MINUTES,
         )
 
     def _current_only_plan(self, planned_interval: PlanInterval) -> PlanInterval:
@@ -717,45 +703,6 @@ class BatteryOptimizerCoordinator(DataUpdateCoordinator[OptimizationResult | Non
         current_window = _control_window_start(now, DEFAULT_COMMAND_WRITE_INTERVAL_MINUTES)
         applied_window = _control_window_start(self._last_full_device_write, DEFAULT_COMMAND_WRITE_INTERVAL_MINUTES)
         return current_window == applied_window
-
-    def _current_tuning_reason(
-        self,
-        now: datetime,
-        planned_snapshot: CommandSnapshot,
-    ) -> str | None:
-        if not self._is_control_window_locked():
-            return None
-        if self._applied_snapshot is None or self._applied_plan is None:
-            return None
-        if self._applied_snapshot.mode is BatteryMode.HOLD:
-            return None
-        if planned_snapshot.mode is not self._applied_snapshot.mode:
-            return None
-        if not _current_tuning_due(
-            now,
-            self._last_device_write,
-            DEFAULT_CURRENT_TUNING_INTERVAL_MINUTES,
-        ):
-            return None
-        if not _snapshot_current_delta_requires_update(
-            self._applied_snapshot,
-            planned_snapshot,
-            absolute_deadband_a=DEFAULT_CURRENT_TUNING_DEADBAND_A,
-            ratio_deadband=DEFAULT_CURRENT_TUNING_DEADBAND_RATIO,
-        ):
-            return None
-
-        current_label = (
-            "charge"
-            if planned_snapshot.mode is BatteryMode.CHARGE
-            else "discharge"
-        )
-        previous_amps = _snapshot_current_amps(self._applied_snapshot)
-        desired_amps = _snapshot_current_amps(planned_snapshot)
-        return (
-            f"15-minute current-only tuning: {current_label} current "
-            f"{previous_amps:.1f}A -> {desired_amps:.1f}A."
-        )
 
     async def _async_reconcile_if_needed(self, skipped_reason: str) -> str | None:
         if self._applied_snapshot is None or self._applied_plan is None:
@@ -1178,44 +1125,6 @@ def _control_window_start(moment: datetime, interval_minutes: int) -> datetime:
     return moment.replace(minute=bucket, second=0, microsecond=0)
 
 
-def _current_tuning_due(
-    now: datetime,
-    last_write: datetime | None,
-    interval_minutes: int,
-) -> bool:
-    if last_write is None:
-        return True
-    return _control_window_start(now, interval_minutes) > _control_window_start(last_write, interval_minutes)
-
-
-def _snapshot_current_amps(snapshot: CommandSnapshot) -> float:
-    if snapshot.mode is BatteryMode.CHARGE:
-        return snapshot.grid_charge_current_a
-    if snapshot.mode is BatteryMode.DISCHARGE:
-        return snapshot.max_discharge_current_a
-    return 0.0
-
-
-def _snapshot_current_delta_requires_update(
-    applied_snapshot: CommandSnapshot,
-    planned_snapshot: CommandSnapshot,
-    *,
-    absolute_deadband_a: float,
-    ratio_deadband: float,
-) -> bool:
-    if planned_snapshot.mode is not applied_snapshot.mode:
-        return False
-    desired = _snapshot_current_amps(planned_snapshot)
-    current = _snapshot_current_amps(applied_snapshot)
-    delta = abs(desired - current)
-    if delta < 0.5:
-        return False
-    if delta >= absolute_deadband_a:
-        return True
-    baseline = max(abs(current), abs(desired), 1.0)
-    return delta >= 3.0 and (delta / baseline) >= ratio_deadband
-
-
 def _build_projected_soc_updates(
     coordinator: BatteryOptimizerCoordinator,
     result: OptimizationResult | None,
@@ -1301,7 +1210,6 @@ def _build_command_target_updates(
             coordinator._last_input_constraints,
             running_soc,
             coordinator.adaptive_state,
-            DEFAULT_CURRENT_TUNING_INTERVAL_MINUTES,
         )
         updates.append(
             {

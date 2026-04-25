@@ -192,32 +192,6 @@ def test_compute_command_targets_uses_reserve_floor_for_discharge_window() -> No
     assert targets.target_soc_percent == 10.0
 
 
-def test_compute_command_targets_respects_write_window_for_current_tuning() -> None:
-    start = datetime(2026, 4, 21, tzinfo=timezone.utc)
-    intervals = [
-        _plan(BatteryMode.CHARGE, start, 52.0, 1.0),
-        _plan(BatteryMode.CHARGE, start + timedelta(minutes=15), 55.0, 3.0),
-    ]
-
-    quarter_hour_targets = compute_command_targets(
-        intervals,
-        _constraints(),
-        current_soc_percent=50.0,
-        adaptive_state=AdaptiveState(),
-        write_interval_minutes=15,
-    )
-    half_hour_targets = compute_command_targets(
-        intervals,
-        _constraints(),
-        current_soc_percent=50.0,
-        adaptive_state=AdaptiveState(),
-        write_interval_minutes=30,
-    )
-
-    assert quarter_hour_targets.target_power_kw == 1.0
-    assert half_hour_targets.target_power_kw == 2.0
-
-
 def test_update_adaptive_state_learns_bias_and_response() -> None:
     start = datetime(2026, 4, 21, tzinfo=timezone.utc)
     snapshot = build_interval_snapshot(_plan(BatteryMode.CHARGE, start, 55.0, 3.0), 50.0)
