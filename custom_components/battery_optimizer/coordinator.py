@@ -701,13 +701,27 @@ class BatteryOptimizerCoordinator(DataUpdateCoordinator[OptimizationResult | Non
         current_soc = _read_number(self.hass, self.config.get(CONF_BATTERY_SOC_ENTITY))
         if current_soc is None:
             current_soc = result.intervals[0].projected_soc_percent
-        return compute_command_targets(
+        command_targets = compute_command_targets(
             result.intervals,
             self._last_input_constraints,
             current_soc,
             self.adaptive_state,
             DEFAULT_COMMAND_WRITE_INTERVAL_MINUTES,
         )
+        if result.intervals[0].mode is BatteryMode.DISCHARGE:
+            live_load_kw = _read_kw(self.hass, self.config.get(CONF_LOAD_POWER_ENTITY))
+            command_targets = replace(
+                command_targets,
+                target_power_kw=round(
+                    _discharge_command_power_target_kw(
+                        planned_power_kw=command_targets.target_power_kw,
+                        live_load_kw=live_load_kw,
+                        max_discharge_kw=self._last_input_constraints.max_discharge_kw,
+                    ),
+                    3,
+                ),
+            )
+        return command_targets
 
     def _current_only_plan(self, planned_interval: PlanInterval) -> PlanInterval:
         if not self._is_control_window_locked():
@@ -1203,6 +1217,18 @@ def _current_only_power_target(
     if last_command_target_power_kw is not None:
         return last_command_target_power_kw
     return current_only_plan_target_power_kw
+
+
+def _discharge_command_power_target_kw(
+    *,
+    planned_power_kw: float,
+    live_load_kw: float | None,
+    max_discharge_kw: float,
+) -> float:
+    target_kw = max(planned_power_kw, 0.0)
+    if live_load_kw is not None:
+        target_kw = max(target_kw, max(live_load_kw, 0.0))
+    return min(target_kw, max_discharge_kw)
 
 
 def _build_projected_soc_updates(

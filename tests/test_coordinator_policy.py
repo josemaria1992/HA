@@ -90,6 +90,7 @@ optimizer = sys.modules["custom_components.battery_optimizer.optimizer"]
 BatteryMode = optimizer.BatteryMode
 current_tuning_due = coordinator._current_tuning_due
 current_only_power_target = coordinator._current_only_power_target
+discharge_command_power_target_kw = coordinator._discharge_command_power_target_kw
 
 
 def test_current_tuning_due_only_after_new_quarter_hour_bucket() -> None:
@@ -109,3 +110,16 @@ def test_current_only_power_uses_new_discharge_target_inside_locked_window() -> 
     )
 
     assert power == 4.5
+
+
+def test_discharge_command_power_tracks_live_load_up_to_limit() -> None:
+    assert discharge_command_power_target_kw(
+        planned_power_kw=1.5,
+        live_load_kw=4.2,
+        max_discharge_kw=10.24,
+    ) == 4.2
+    assert discharge_command_power_target_kw(
+        planned_power_kw=1.5,
+        live_load_kw=12.0,
+        max_discharge_kw=10.24,
+    ) == 10.24
