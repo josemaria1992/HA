@@ -48,6 +48,8 @@ from .const import (
     DEFAULT_FORECAST_RELIABILITY_MAX_RELATIVE_MAE,
     DEFAULT_FORECAST_RELIABILITY_MIN_SAMPLES,
     DEFAULT_GRID_FEE_PER_KWH,
+    DEFAULT_SOLARMAN_MAX_CHARGING_CURRENT_A,
+    DEFAULT_SOLARMAN_MAX_DISCHARGING_CURRENT_A,
     DEFAULT_VERY_CHEAP_SPOT_PRICE,
 )
 from .optimizer import BatteryConstraints, LoadPoint, OptimizationInput, PricePoint
@@ -98,16 +100,16 @@ class DataIngestor:
             "battery voltage",
         )
         max_charge_kw = self._read_power_limit_kw(
-            self.config.get(CONF_MAX_CHARGING_CURRENT_NUMBER),
             voltage,
             self.config.get(CONF_MAX_CHARGE_POWER_KW),
+            DEFAULT_SOLARMAN_MAX_CHARGING_CURRENT_A,
             reasons,
             "max charging current",
         )
         max_discharge_kw = self._read_power_limit_kw(
-            self.config.get(CONF_MAX_DISCHARGING_CURRENT_NUMBER),
             voltage,
             self.config.get(CONF_MAX_DISCHARGE_POWER_KW),
+            DEFAULT_SOLARMAN_MAX_DISCHARGING_CURRENT_A,
             reasons,
             "max discharging current",
         )
@@ -231,22 +233,20 @@ class DataIngestor:
 
     def _read_power_limit_kw(
         self,
-        current_entity_id: str | None,
         voltage: float,
         fallback_kw: Any,
+        default_current_a: float,
         reasons: list[str],
         label: str,
     ) -> float:
-        if current_entity_id:
-            current_a = self._read_float_state(current_entity_id, reasons, label)
-            if current_a is not None and current_a > 0 and voltage > 0:
-                return current_a * voltage / 1000
         try:
             value = float(fallback_kw)
         except (TypeError, ValueError):
             value = 0
+        if value <= 0 and voltage > 0:
+            return default_current_a * voltage / 1000
         if value <= 0:
-            reasons.append(f"{label} is missing and fallback kW limit is not valid.")
+            reasons.append(f"{label} is missing and no valid fallback limit is available.")
         return value
 
 
