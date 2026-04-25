@@ -360,24 +360,26 @@ class SolarmanBackend:
     def _charge_current_amps(self, target_kw: float) -> float:
         voltage = self._battery_voltage()
         amps = max(target_kw * 1000 / max(voltage, 1), 0.0)
-        return min(amps, self._hardware_charge_limit_a())
+        configured_limit = _read_number(self.hass, self.config.get(CONF_MAX_CHARGING_CURRENT_NUMBER))
+        max_limit = DEFAULT_SOLARMAN_MAX_CHARGING_CURRENT_A
+        if configured_limit is not None and configured_limit > 0:
+            max_limit = min(max_limit, configured_limit)
+        return min(amps, max_limit)
 
     def _discharge_current_amps(self, target_kw: float) -> float:
         voltage = self._battery_voltage()
         amps = max(target_kw * 1000 / max(voltage, 1), 0.0)
-        return min(amps, self._hardware_discharge_limit_a())
+        configured_limit = _read_number(self.hass, self.config.get(CONF_MAX_DISCHARGING_CURRENT_NUMBER))
+        max_limit = DEFAULT_SOLARMAN_MAX_DISCHARGING_CURRENT_A
+        if configured_limit is not None and configured_limit > 0:
+            max_limit = min(max_limit, configured_limit)
+        return min(amps, max_limit)
 
     def _clamp_discharge_power_kw(self, target_kw: float) -> float:
         live_load_kw = self._live_load_kw()
         if live_load_kw is None:
             return max(target_kw, 0.0)
         return max(min(target_kw, live_load_kw), 0.0)
-
-    def _hardware_charge_limit_a(self) -> float:
-        return DEFAULT_SOLARMAN_MAX_CHARGING_CURRENT_A
-
-    def _hardware_discharge_limit_a(self) -> float:
-        return DEFAULT_SOLARMAN_MAX_DISCHARGING_CURRENT_A
 
     def _charge_target_soc(self, plan: PlanInterval, current_soc: float) -> float:
         return min(max(plan.projected_soc_percent, current_soc + 1.0), 100.0)
