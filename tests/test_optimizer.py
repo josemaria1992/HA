@@ -142,6 +142,20 @@ def test_cheap_valley_holds_instead_of_discharge_when_already_charged() -> None:
     assert min(interval.projected_soc_percent for interval in result.intervals[:3]) >= 89.0
 
 
+def test_charge_valley_does_not_drop_soc_between_charge_slots() -> None:
+    result = optimize(_input([0.0, 1.2, 0.0, 1.2, 3.2], soc=25, loads=[4.0, 4.0, 4.0, 4.0, 4.0]))
+
+    assert result.valid
+    assert [interval.mode for interval in result.intervals[:4]] == [
+        BatteryMode.CHARGE,
+        BatteryMode.HOLD,
+        BatteryMode.CHARGE,
+        BatteryMode.HOLD,
+    ]
+    valley_soc = [interval.projected_soc_percent for interval in result.intervals[:4]]
+    assert valley_soc == sorted(valley_soc)
+
+
 def test_no_export_discharge_is_clamped_to_load() -> None:
     result = optimize(_input([3.5, 3.0, 0.4, 0.3], soc=80, loads=[0.6, 0.5, 0.5, 0.5], max_discharge_kw=12))
 

@@ -685,6 +685,18 @@ def _optimize_dp(
         key=lambda item: item[1][0] + max(initial_kwh - item[0], 0) * terminal_value,
     )
     del best_soc
+    best_actions = _suppress_charge_valley_discharge_actions(
+        actions=best_actions,
+        prices=prices,
+        loads=loads,
+        all_in_prices=all_in_prices,
+        initial_soc_kwh=initial_state,
+        reserve_kwh=reserve_kwh,
+        max_kwh=max_kwh,
+        constraints=constraints,
+        interval_hours=interval_hours,
+        strategy=strategy,
+    )
 
     plan: list[PlanInterval] = []
     projected_cost_without_battery = 0.0
@@ -831,6 +843,135 @@ def _dp_hold_action(
     }
 
 
+def _suppress_charge_valley_discharge_actions(
+    *,
+    actions: list[dict[str, float | BatteryMode | str]],
+    prices: list[PricePoint],
+    loads: list[float],
+    all_in_prices: list[float],
+    initial_soc_kwh: float,
+    reserve_kwh: float,
+    max_kwh: float,
+    constraints: BatteryConstraints,
+    interval_hours: float,
+    strategy: StrategyContext,
+) -> list[dict[str, float | BatteryMode | str]]:
+    """Flatten charge valleys so the chosen path cannot cycle inside them."""
+
+    smoothed: list[dict[str, float | BatteryMode | str]] = []
+    running_soc_kwh = initial_soc_kwh
+    charge_valley_active = False
+    for index, action in enumerate(actions):
+        raw_price = prices[index].price
+        all_in_price = all_in_prices[index]
+        mode = action["mode"]
+        assert isinstance(mode, BatteryMode)
+        protected_charge_window = _is_protected_charge_window(
+            raw_price=raw_price,
+            all_in_price=all_in_price,
+            constraints=constraints,
+            strategy=strategy,
+        )
+        real_discharge_window = all_in_price >= strategy.high_threshold and not protected_charge_window
+
+        if real_discharge_window:
+            charge_valley_active = False
+        elif protected_charge_window or mode is BatteryMode.CHARGE:
+            charge_valley_active = True
+
+        reason = str(action["reason"])
+        if charge_valley_active and mode is BatteryMode.DISCHARGE:
+            mode = BatteryMode.HOLD
+            reason = "Holding during a protected charge valley to avoid cycling before the high-price window."
+
+        load_kw = loads[index] if index < len(loads) else (loads[-1] if loads else constraints.max_discharge_kw)
+        load_kwh = max(load_kw, 0) * interval_hours
+        rebased = _rebase_action_for_soc(
+            mode=mode,
+            soc_kwh=running_soc_kwh,
+            reserve_kwh=reserve_kwh,
+            max_kwh=max_kwh,
+            constraints=constraints,
+            interval_hours=interval_hours,
+            load_kwh=load_kwh,
+            raw_price=raw_price,
+            all_in_price=all_in_price,
+            strategy=strategy,
+            reason=reason,
+        )
+        smoothed.append(rebased)
+        running_soc_kwh = float(rebased["next_soc_kwh"])
+    return smoothed
+
+
+def _rebase_action_for_soc(
+    *,
+    mode: BatteryMode,
+    soc_kwh: float,
+    reserve_kwh: float,
+    max_kwh: float,
+    constraints: BatteryConstraints,
+    interval_hours: float,
+    load_kwh: float,
+    raw_price: float,
+    all_in_price: float,
+    strategy: StrategyContext,
+    reason: str,
+) -> dict[str, float | BatteryMode | str]:
+    if mode is BatteryMode.CHARGE:
+        charge_room = max(max_kwh - soc_kwh, 0)
+        if charge_room <= 0.01:
+            return _dp_hold_action(soc_kwh, load_kwh, all_in_price, "Holding at the charge ceiling during a protected valley.")
+        max_grid_charge = constraints.max_charge_kw * interval_hours
+        grid_charge = min(max_grid_charge, charge_room / constraints.charge_efficiency)
+        stored = grid_charge * constraints.charge_efficiency
+        charge_bonus = _charge_bonus_per_kwh(raw_price, all_in_price, strategy, constraints) * stored
+        return {
+            "mode": BatteryMode.CHARGE,
+            "next_soc_kwh": min(soc_kwh + stored, max_kwh),
+            "grid_kwh": load_kwh + grid_charge,
+            "battery_discharge_kwh": 0.0,
+            "target_power_kw": grid_charge / interval_hours,
+            "cost": (load_kwh + grid_charge) * all_in_price + stored * _cycle_penalty(constraints) - charge_bonus,
+            "reason": reason,
+        }
+    if mode is BatteryMode.DISCHARGE:
+        usable = max(soc_kwh - reserve_kwh, 0)
+        if usable <= 0.01 or load_kwh <= 0:
+            return _dp_hold_action(soc_kwh, load_kwh, all_in_price, "Holding because no usable discharge energy is available.")
+        max_battery_discharge = constraints.max_discharge_kw * interval_hours / constraints.discharge_efficiency
+        battery_discharge = min(max_battery_discharge, usable, load_kwh / constraints.discharge_efficiency)
+        delivered = battery_discharge * constraints.discharge_efficiency
+        return {
+            "mode": BatteryMode.DISCHARGE,
+            "next_soc_kwh": max(soc_kwh - battery_discharge, reserve_kwh),
+            "grid_kwh": max(load_kwh - delivered, 0),
+            "battery_discharge_kwh": battery_discharge,
+            "target_power_kw": delivered / interval_hours,
+            "cost": (
+                max(load_kwh - delivered, 0) * all_in_price
+                + battery_discharge * constraints.degradation_cost_per_kwh
+                + battery_discharge * _cycle_penalty(constraints)
+            ),
+            "reason": reason,
+        }
+    return _dp_hold_action(soc_kwh, load_kwh, all_in_price, reason)
+
+
+def _is_protected_charge_window(
+    *,
+    raw_price: float,
+    all_in_price: float,
+    constraints: BatteryConstraints,
+    strategy: StrategyContext,
+) -> bool:
+    return (
+        raw_price <= constraints.very_cheap_spot_price + 0.05
+        or all_in_price <= constraints.cheap_effective_price
+        or all_in_price <= strategy.low_threshold
+    )
+
+
 def _quantize(value: float, step: float, minimum: float, maximum: float) -> float:
     return round(min(max(round(value / step) * step, minimum), maximum), 3)
 
@@ -894,10 +1035,11 @@ def _filter_actions_for_priority(
     if index == 0 and strategy.force_charge_now and charge_available:
         return [action for action in filtered if action["mode"] is BatteryMode.CHARGE]
 
-    protected_charge_window = (
-        raw_price <= constraints.very_cheap_spot_price + 0.05
-        or all_in_price <= constraints.cheap_effective_price
-        or all_in_price <= strategy.low_threshold
+    protected_charge_window = _is_protected_charge_window(
+        raw_price=raw_price,
+        all_in_price=all_in_price,
+        constraints=constraints,
+        strategy=strategy,
     )
     if (index == 0 and strategy.block_discharge_now) or protected_charge_window:
         filtered = [action for action in filtered if action["mode"] is not BatteryMode.DISCHARGE]
