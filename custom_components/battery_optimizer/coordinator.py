@@ -1313,6 +1313,11 @@ def _build_projected_soc_updates(
         if coordinator._is_control_window_locked() and coordinator._applied_plan is not None
         else current_interval.projected_soc_percent
     )
+    if current_mode == BatteryMode.CHARGE.value:
+        if coordinator.last_command_target_soc is not None:
+            current_soc = coordinator.last_command_target_soc
+        elif coordinator.planned_command_target_soc is not None:
+            current_soc = coordinator.planned_command_target_soc
     updates.append(
         {
             "time": current_time,
@@ -1323,17 +1328,28 @@ def _build_projected_soc_updates(
             "source": "active_command" if coordinator._is_control_window_locked() else "planned_interval",
         }
     )
-    for interval in result.intervals[1:]:
+    running_soc = current_interval.projected_soc_percent
+    for index, interval in enumerate(result.intervals[1:], start=1):
+        projected_soc = interval.projected_soc_percent
+        if interval.mode is BatteryMode.CHARGE and coordinator._last_input_constraints is not None:
+            command_targets = compute_command_targets(
+                result.intervals[index:],
+                coordinator._last_input_constraints,
+                running_soc,
+                coordinator.adaptive_state,
+            )
+            projected_soc = command_targets.target_soc_percent
         updates.append(
             {
                 "time": dt_util.as_local(interval.start).isoformat(),
-                "projected_soc_percent": int(round(interval.projected_soc_percent)),
+                "projected_soc_percent": int(round(projected_soc)),
                 "mode": interval.mode.value,
                 "target_power_kw": interval.target_power_kw,
                 "price": interval.price,
                 "source": "planned_interval",
             }
         )
+        running_soc = interval.projected_soc_percent
     return updates
 
 
@@ -1419,8 +1435,6 @@ def _merge_time_series_history(
     for point in updates:
         parsed = _point_time(point)
         if parsed is None or not (retain_start <= parsed < retain_end):
-            continue
-        if parsed <= now_local and parsed in merged:
             continue
         merged[parsed] = point
 

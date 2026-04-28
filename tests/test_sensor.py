@@ -115,6 +115,7 @@ BatteryMode = optimizer.BatteryMode
 PlanInterval = optimizer.PlanInterval
 BatteryConstraints = optimizer.BatteryConstraints
 _current_projected_soc_point = sensor._current_projected_soc_point
+_projected_soc_points_for_day = sensor._projected_soc_points_for_day
 _command_target_soc_points_for_day = sensor._command_target_soc_points_for_day
 
 
@@ -138,13 +139,13 @@ def _plan(mode: BatteryMode, projected_soc: float, target_power_kw: float) -> Pl
 
 
 def test_current_projected_soc_prefers_active_command_when_window_locked() -> None:
-    applied_plan = _plan(BatteryMode.DISCHARGE, projected_soc=60.0, target_power_kw=2.5)
+    applied_plan = _plan(BatteryMode.CHARGE, projected_soc=60.0, target_power_kw=2.5)
     coordinator = SimpleNamespace(
-        planned_command_target_soc=50.0,
-        last_command_target_soc=50.0,
+        planned_command_target_soc=90.0,
+        last_command_target_soc=90.0,
         planned_command_target_power_kw=1.8,
         last_command_target_power_kw=2.5,
-        _applied_snapshot=SimpleNamespace(mode=BatteryMode.DISCHARGE),
+        _applied_snapshot=SimpleNamespace(mode=BatteryMode.CHARGE),
         _applied_plan=applied_plan,
         data=SimpleNamespace(intervals=[_plan(BatteryMode.HOLD, projected_soc=54.0, target_power_kw=0.0)], projected_soc_percent=54.0),
         _is_control_window_locked=lambda: True,
@@ -152,15 +153,15 @@ def test_current_projected_soc_prefers_active_command_when_window_locked() -> No
 
     point = _current_projected_soc_point(coordinator)
 
-    assert point["projected_soc_percent"] == 60.0
+    assert point["projected_soc_percent"] == 90.0
     assert point["target_power_kw"] == 2.5
-    assert point["mode"] == BatteryMode.DISCHARGE.value
+    assert point["mode"] == BatteryMode.CHARGE.value
     assert point["source"] == "active_command"
 
 
 def test_current_projected_soc_uses_planned_target_when_window_not_locked() -> None:
     coordinator = SimpleNamespace(
-        planned_command_target_soc=54.0,
+        planned_command_target_soc=90.0,
         last_command_target_soc=60.0,
         planned_command_target_power_kw=1.8,
         last_command_target_power_kw=2.5,
@@ -172,10 +173,69 @@ def test_current_projected_soc_uses_planned_target_when_window_not_locked() -> N
 
     point = _current_projected_soc_point(coordinator)
 
-    assert point["projected_soc_percent"] == 54.0
+    assert point["projected_soc_percent"] == 90.0
     assert point["target_power_kw"] == 1.8
     assert point["mode"] == BatteryMode.CHARGE.value
     assert point["source"] == "planned_interval"
+
+
+def test_projected_soc_points_show_charge_command_ceiling() -> None:
+    constraints = BatteryConstraints(
+        capacity_kwh=32.14,
+        soc_percent=35.0,
+        reserve_soc_percent=10,
+        preferred_max_soc_percent=90,
+        hard_max_soc_percent=100,
+        max_charge_kw=3.0,
+        max_discharge_kw=3.0,
+        charge_efficiency=0.95,
+        discharge_efficiency=0.95,
+        degradation_cost_per_kwh=0.01,
+        grid_fee_per_kwh=0.773,
+        interval_minutes=60,
+        min_dwell_intervals=0,
+        price_hysteresis=0.01,
+        very_cheap_spot_price=0.1,
+        cheap_effective_price=1.5,
+        expensive_effective_price=2.5,
+        optimizer_aggressiveness="balanced",
+    )
+    now = sensor.dt_util.now()
+    charge_interval = PlanInterval(
+        start=now,
+        mode=BatteryMode.CHARGE,
+        target_power_kw=3.0,
+        projected_soc_percent=38.0,
+        price=0.8,
+        load_kw=2.0,
+        grid_import_without_battery_kwh=2.0,
+        grid_import_with_battery_kwh=0.5,
+        cost_without_battery=3.0,
+        cost_with_battery=0.75,
+        electricity_savings=2.25,
+        degradation_cost=0.0,
+        net_value=2.25,
+        reason="test",
+    )
+    coordinator = SimpleNamespace(
+        projected_soc_history=[],
+        planned_command_target_soc=90.0,
+        last_command_target_soc=None,
+        planned_command_target_power_kw=3.0,
+        last_command_target_power_kw=None,
+        _applied_snapshot=None,
+        _applied_plan=None,
+        data=SimpleNamespace(intervals=[charge_interval]),
+        _is_control_window_locked=lambda: False,
+        _last_input_constraints=constraints,
+        adaptive_state=adaptive.AdaptiveState(),
+        config={"battery_soc_entity": "sensor.inverter_battery"},
+        hass=SimpleNamespace(states=SimpleNamespace(get=lambda entity_id: SimpleNamespace(state="35.0"))),
+    )
+
+    points = _projected_soc_points_for_day(coordinator, "today")
+
+    assert points[0]["projected_soc_percent"] == 90
 
 
 def test_command_target_soc_points_include_active_and_future_targets() -> None:
@@ -201,8 +261,9 @@ def test_command_target_soc_points_include_active_and_future_targets() -> None:
     )
     current_state = SimpleNamespace(state="35.0")
     applied_plan = _plan(BatteryMode.CHARGE, projected_soc=38.0, target_power_kw=3.0)
+    now = sensor.dt_util.now()
     future_charge = PlanInterval(
-        start=datetime(2026, 4, 21, 13, 0, tzinfo=timezone.utc),
+        start=now,
         mode=BatteryMode.CHARGE,
         target_power_kw=3.0,
         projected_soc_percent=42.0,
@@ -218,7 +279,7 @@ def test_command_target_soc_points_include_active_and_future_targets() -> None:
         reason="test",
     )
     expensive_later = PlanInterval(
-        start=datetime(2026, 4, 21, 14, 0, tzinfo=timezone.utc),
+        start=now,
         mode=BatteryMode.HOLD,
         target_power_kw=0.0,
         projected_soc_percent=42.0,
