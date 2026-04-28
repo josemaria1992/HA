@@ -615,9 +615,15 @@ class BatteryOptimizerCoordinator(DataUpdateCoordinator[OptimizationResult | Non
         if self._invalid_fallback_active:
             return "full", "Data recovered after fallback hold; applying planned command immediately."
 
+        charge_tuning_reason = self._charge_current_tuning_reason(now, planned_snapshot)
         discharge_tuning_reason = self._discharge_current_tuning_reason(now, planned_snapshot)
 
+        if self._last_write_signature is not None and signature[0] != self._last_write_signature[0]:
+            return "full", f"Mode changed to {result.intervals[0].mode.value}; applying planned command immediately."
+
         if signature == self._last_write_signature:
+            if charge_tuning_reason is not None:
+                return "current_only", charge_tuning_reason
             if discharge_tuning_reason is not None:
                 return "current_only", discharge_tuning_reason
             return "skip", "Plan unchanged; preserving inverter settings to reduce writes."
@@ -625,12 +631,33 @@ class BatteryOptimizerCoordinator(DataUpdateCoordinator[OptimizationResult | Non
         current_window = _control_window_start(now, DEFAULT_COMMAND_WRITE_INTERVAL_MINUTES)
         last_window = _control_window_start(self._last_full_device_write, DEFAULT_COMMAND_WRITE_INTERVAL_MINUTES)
         if current_window <= last_window:
+            if charge_tuning_reason is not None:
+                return "current_only", charge_tuning_reason
             if discharge_tuning_reason is not None:
                 return "current_only", discharge_tuning_reason
             next_write_at = current_window + timedelta(minutes=DEFAULT_COMMAND_WRITE_INTERVAL_MINUTES)
             return "skip", f"Plan changed, but next regular inverter update is after {next_write_at.strftime('%H:%M')}."
 
         return "full", "Regular 30-minute inverter update."
+
+    def _charge_current_tuning_reason(
+        self,
+        now: datetime,
+        planned_snapshot: CommandSnapshot,
+    ) -> str | None:
+        if not self._is_control_window_locked():
+            return None
+        if self._applied_snapshot is None or self._applied_plan is None:
+            return None
+        return _charge_current_tuning_reason(
+            applied_mode=self._applied_snapshot.mode,
+            planned_mode=planned_snapshot.mode,
+            current_amps=self._applied_snapshot.grid_charge_current_a,
+            desired_amps=planned_snapshot.grid_charge_current_a,
+            now=now,
+            last_write=self._last_device_write,
+            is_control_window_locked=True,
+        )
 
     def _discharge_current_tuning_reason(
         self,
@@ -1217,6 +1244,40 @@ def _current_only_power_target(
     if last_command_target_power_kw is not None:
         return last_command_target_power_kw
     return current_only_plan_target_power_kw
+
+
+def _charge_current_tuning_reason(
+    *,
+    applied_mode: BatteryMode | None,
+    planned_mode: BatteryMode,
+    current_amps: float,
+    desired_amps: float,
+    now: datetime,
+    last_write: datetime | None,
+    is_control_window_locked: bool,
+) -> str | None:
+    if not is_control_window_locked:
+        return None
+    if applied_mode is not BatteryMode.CHARGE or planned_mode is not BatteryMode.CHARGE:
+        return None
+    delta_amps = abs(desired_amps - current_amps)
+    if delta_amps < 0.5:
+        return None
+    if desired_amps < current_amps:
+        return (
+            f"Immediate current-only charge reduction: "
+            f"{current_amps:.1f}A -> {desired_amps:.1f}A to protect phase-current headroom."
+        )
+    if not _current_tuning_due(
+        now,
+        last_write,
+        DEFAULT_DISCHARGE_CURRENT_TUNING_INTERVAL_MINUTES,
+    ):
+        return None
+    return (
+        f"15-minute current-only charge retune: "
+        f"{current_amps:.1f}A -> {desired_amps:.1f}A."
+    )
 
 
 def _discharge_command_power_target_kw(

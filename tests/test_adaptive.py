@@ -95,13 +95,13 @@ def test_apply_load_bias_adjusts_forecast_without_going_negative() -> None:
     assert biased[1].load_kw == 0.5
 
 
-def test_compute_command_targets_pushes_charge_target_beyond_current_soc() -> None:
+def test_compute_command_targets_charges_to_preferred_ceiling_without_soc_steps() -> None:
     start = datetime(2026, 4, 21, tzinfo=timezone.utc)
     targets = compute_command_targets(
         [
-            _plan(BatteryMode.CHARGE, start, 52.0, 3.0),
-            _plan(BatteryMode.CHARGE, start + timedelta(minutes=15), 55.0, 3.0),
-            _plan(BatteryMode.CHARGE, start + timedelta(minutes=30), 58.0, 3.0),
+            _plan(BatteryMode.CHARGE, start, 52.0, 1.0),
+            _plan(BatteryMode.CHARGE, start + timedelta(minutes=15), 55.0, 1.5),
+            _plan(BatteryMode.CHARGE, start + timedelta(minutes=30), 58.0, 2.0),
         ],
         _constraints(),
         current_soc_percent=50.0,
@@ -110,8 +110,24 @@ def test_compute_command_targets_pushes_charge_target_beyond_current_soc() -> No
 
     assert isinstance(targets, CommandTargets)
     assert targets.target_power_kw == 3.0
-    assert targets.target_soc_percent == 58.0
+    assert targets.target_soc_percent == 90.0
     assert targets.horizon_intervals == 3
+
+
+def test_compute_command_targets_charges_to_hard_ceiling_for_high_price_plan() -> None:
+    start = datetime(2026, 4, 21, tzinfo=timezone.utc)
+    targets = compute_command_targets(
+        [
+            _plan(BatteryMode.CHARGE, start, 92.0, 3.0),
+            _plan(BatteryMode.CHARGE, start + timedelta(minutes=15), 96.0, 3.0),
+        ],
+        _constraints(),
+        current_soc_percent=88.0,
+        adaptive_state=AdaptiveState(),
+    )
+
+    assert targets.target_power_kw == 3.0
+    assert targets.target_soc_percent == 100.0
 
 
 def test_compute_command_targets_uses_full_future_charge_goal_not_first_short_run() -> None:

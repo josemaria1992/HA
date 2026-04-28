@@ -27,6 +27,8 @@ battery_optimizer_pkg = sys.modules.setdefault(
 battery_optimizer_pkg.__path__ = [str(BASE)]
 
 homeassistant_pkg = sys.modules.setdefault("homeassistant", types.ModuleType("homeassistant"))
+homeassistant_const = sys.modules.setdefault("homeassistant.const", types.ModuleType("homeassistant.const"))
+homeassistant_const.ATTR_ENTITY_ID = "entity_id"
 homeassistant_config_entries = sys.modules.setdefault(
     "homeassistant.config_entries",
     types.ModuleType("homeassistant.config_entries"),
@@ -71,6 +73,7 @@ homeassistant_dt = sys.modules.setdefault("homeassistant.util.dt", types.ModuleT
 homeassistant_dt.now = lambda: datetime(2026, 4, 25, 12, 0, tzinfo=timezone.utc)
 homeassistant_dt.as_local = lambda value: value
 homeassistant_util.dt = homeassistant_dt
+homeassistant_pkg.const = homeassistant_const
 homeassistant_pkg.config_entries = homeassistant_config_entries
 homeassistant_pkg.core = homeassistant_core
 homeassistant_pkg.helpers = homeassistant_helpers
@@ -90,6 +93,7 @@ optimizer = sys.modules["custom_components.battery_optimizer.optimizer"]
 BatteryMode = optimizer.BatteryMode
 current_tuning_due = coordinator._current_tuning_due
 current_only_power_target = coordinator._current_only_power_target
+charge_current_tuning_reason = coordinator._charge_current_tuning_reason
 discharge_command_power_target_kw = coordinator._discharge_command_power_target_kw
 
 
@@ -110,6 +114,47 @@ def test_current_only_power_uses_new_discharge_target_inside_locked_window() -> 
     )
 
     assert power == 4.5
+
+
+def test_charge_current_reduction_is_immediate_inside_locked_window() -> None:
+    reason = charge_current_tuning_reason(
+        applied_mode=BatteryMode.CHARGE,
+        planned_mode=BatteryMode.CHARGE,
+        current_amps=120.0,
+        desired_amps=40.0,
+        now=datetime(2026, 4, 25, 12, 5, tzinfo=timezone.utc),
+        last_write=datetime(2026, 4, 25, 12, 2, tzinfo=timezone.utc),
+        is_control_window_locked=True,
+    )
+
+    assert reason is not None
+    assert reason.startswith("Immediate current-only charge reduction")
+
+
+def test_charge_current_increase_waits_for_quarter_hour_bucket() -> None:
+    last_write = datetime(2026, 4, 25, 12, 2, tzinfo=timezone.utc)
+
+    assert (
+        charge_current_tuning_reason(
+            applied_mode=BatteryMode.CHARGE,
+            planned_mode=BatteryMode.CHARGE,
+            current_amps=40.0,
+            desired_amps=120.0,
+            now=datetime(2026, 4, 25, 12, 14, tzinfo=timezone.utc),
+            last_write=last_write,
+            is_control_window_locked=True,
+        )
+        is None
+    )
+    assert charge_current_tuning_reason(
+        applied_mode=BatteryMode.CHARGE,
+        planned_mode=BatteryMode.CHARGE,
+        current_amps=40.0,
+        desired_amps=120.0,
+        now=datetime(2026, 4, 25, 12, 15, tzinfo=timezone.utc),
+        last_write=last_write,
+        is_control_window_locked=True,
+    ) is not None
 
 
 def test_discharge_command_power_tracks_live_load_up_to_limit() -> None:
