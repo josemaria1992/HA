@@ -94,6 +94,8 @@ BatteryMode = optimizer.BatteryMode
 current_tuning_due = coordinator._current_tuning_due
 current_only_power_target = coordinator._current_only_power_target
 charge_current_tuning_reason = coordinator._charge_current_tuning_reason
+mode_change_write_reason = coordinator._mode_change_write_reason
+discharge_current_tuning_reason = coordinator._discharge_current_tuning_reason
 discharge_command_power_target_kw = coordinator._discharge_command_power_target_kw
 
 
@@ -155,6 +157,61 @@ def test_charge_current_increase_waits_for_quarter_hour_bucket() -> None:
         last_write=last_write,
         is_control_window_locked=True,
     ) is not None
+
+
+def test_discharge_related_mode_change_waits_for_quarter_hour_bucket() -> None:
+    last_write = datetime(2026, 4, 25, 12, 2, tzinfo=timezone.utc)
+
+    assert (
+        mode_change_write_reason(
+            new_mode=BatteryMode.HOLD,
+            now=datetime(2026, 4, 25, 12, 14, tzinfo=timezone.utc),
+            last_write=last_write,
+        )
+        is None
+    )
+    assert mode_change_write_reason(
+        new_mode=BatteryMode.HOLD,
+        now=datetime(2026, 4, 25, 12, 15, tzinfo=timezone.utc),
+        last_write=last_write,
+    ) is not None
+
+
+def test_large_discharge_current_change_still_waits_for_quarter_hour_bucket() -> None:
+    last_write = datetime(2026, 4, 25, 12, 2, tzinfo=timezone.utc)
+
+    assert (
+        discharge_current_tuning_reason(
+            applied_mode=BatteryMode.DISCHARGE,
+            planned_mode=BatteryMode.DISCHARGE,
+            current_amps=60.0,
+            desired_amps=180.0,
+            now=datetime(2026, 4, 25, 12, 14, tzinfo=timezone.utc),
+            last_write=last_write,
+            is_control_window_locked=True,
+        )
+        is None
+    )
+    assert discharge_current_tuning_reason(
+        applied_mode=BatteryMode.DISCHARGE,
+        planned_mode=BatteryMode.DISCHARGE,
+        current_amps=60.0,
+        desired_amps=180.0,
+        now=datetime(2026, 4, 25, 12, 15, tzinfo=timezone.utc),
+        last_write=last_write,
+        is_control_window_locked=True,
+    ) is not None
+
+
+def test_charge_mode_change_is_immediate_for_fuse_control() -> None:
+    reason = mode_change_write_reason(
+        new_mode=BatteryMode.CHARGE,
+        now=datetime(2026, 4, 25, 12, 5, tzinfo=timezone.utc),
+        last_write=datetime(2026, 4, 25, 12, 2, tzinfo=timezone.utc),
+    )
+
+    assert reason is not None
+    assert "charge" in reason
 
 
 def test_discharge_command_power_tracks_live_load_up_to_limit() -> None:

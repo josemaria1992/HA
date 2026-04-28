@@ -37,7 +37,6 @@ from .costs import (
 from .const import (
     CONF_ADVISORY_ONLY,
     CONF_BATTERY_SOC_ENTITY,
-    DEFAULT_DISCHARGE_CURRENT_IMMEDIATE_DELTA_A,
     DEFAULT_DISCHARGE_CURRENT_TUNING_INTERVAL_MINUTES,
     CONF_FORECAST_RELIABILITY_MAX_RELATIVE_MAE,
     CONF_FORECAST_RELIABILITY_MIN_SAMPLES,
@@ -619,7 +618,17 @@ class BatteryOptimizerCoordinator(DataUpdateCoordinator[OptimizationResult | Non
         discharge_tuning_reason = self._discharge_current_tuning_reason(now, planned_snapshot)
 
         if self._last_write_signature is not None and signature[0] != self._last_write_signature[0]:
-            return "full", f"Mode changed to {result.intervals[0].mode.value}; applying planned command immediately."
+            mode_change_reason = _mode_change_write_reason(
+                new_mode=result.intervals[0].mode,
+                now=now,
+                last_write=self._last_device_write,
+            )
+            if mode_change_reason is not None:
+                return "full", mode_change_reason
+            return "skip", (
+                f"Mode changed to {result.intervals[0].mode.value}, but discharge-related writes wait for the next "
+                "15-minute tuning bucket to protect inverter memory."
+            )
 
         if signature == self._last_write_signature:
             if charge_tuning_reason is not None:
@@ -668,30 +677,14 @@ class BatteryOptimizerCoordinator(DataUpdateCoordinator[OptimizationResult | Non
             return None
         if self._applied_snapshot is None or self._applied_plan is None:
             return None
-        if self._applied_snapshot.mode is not BatteryMode.DISCHARGE:
-            return None
-        if planned_snapshot.mode is not BatteryMode.DISCHARGE:
-            return None
-
-        current_amps = self._applied_snapshot.max_discharge_current_a
-        desired_amps = planned_snapshot.max_discharge_current_a
-        delta_amps = abs(desired_amps - current_amps)
-        if delta_amps < 0.5:
-            return None
-        if delta_amps >= DEFAULT_DISCHARGE_CURRENT_IMMEDIATE_DELTA_A:
-            return (
-                f"Immediate current-only discharge retune: "
-                f"{current_amps:.1f}A -> {desired_amps:.1f}A because the required current changed by {delta_amps:.1f}A."
-            )
-        if not _current_tuning_due(
-            now,
-            self._last_device_write,
-            DEFAULT_DISCHARGE_CURRENT_TUNING_INTERVAL_MINUTES,
-        ):
-            return None
-        return (
-            f"15-minute current-only discharge retune: "
-            f"{current_amps:.1f}A -> {desired_amps:.1f}A."
+        return _discharge_current_tuning_reason(
+            applied_mode=self._applied_snapshot.mode,
+            planned_mode=planned_snapshot.mode,
+            current_amps=self._applied_snapshot.max_discharge_current_a,
+            desired_amps=planned_snapshot.max_discharge_current_a,
+            now=now,
+            last_write=self._last_device_write,
+            is_control_window_locked=True,
         )
 
     def _update_adaptive_state_if_interval_advanced(self, current_interval_start: datetime | None) -> None:
@@ -1276,6 +1269,52 @@ def _charge_current_tuning_reason(
         return None
     return (
         f"15-minute current-only charge retune: "
+        f"{current_amps:.1f}A -> {desired_amps:.1f}A."
+    )
+
+
+def _mode_change_write_reason(
+    *,
+    new_mode: BatteryMode,
+    now: datetime,
+    last_write: datetime | None,
+) -> str | None:
+    if new_mode is BatteryMode.CHARGE:
+        return "Mode changed to charge; applying planned command immediately."
+    if _current_tuning_due(
+        now,
+        last_write,
+        DEFAULT_DISCHARGE_CURRENT_TUNING_INTERVAL_MINUTES,
+    ):
+        return f"15-minute mode update to {new_mode.value}."
+    return None
+
+
+def _discharge_current_tuning_reason(
+    *,
+    applied_mode: BatteryMode | None,
+    planned_mode: BatteryMode,
+    current_amps: float,
+    desired_amps: float,
+    now: datetime,
+    last_write: datetime | None,
+    is_control_window_locked: bool,
+) -> str | None:
+    if not is_control_window_locked:
+        return None
+    if applied_mode is not BatteryMode.DISCHARGE or planned_mode is not BatteryMode.DISCHARGE:
+        return None
+    delta_amps = abs(desired_amps - current_amps)
+    if delta_amps < 0.5:
+        return None
+    if not _current_tuning_due(
+        now,
+        last_write,
+        DEFAULT_DISCHARGE_CURRENT_TUNING_INTERVAL_MINUTES,
+    ):
+        return None
+    return (
+        f"15-minute current-only discharge retune: "
         f"{current_amps:.1f}A -> {desired_amps:.1f}A."
     )
 
