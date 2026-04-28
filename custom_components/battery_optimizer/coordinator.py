@@ -283,13 +283,14 @@ class BatteryOptimizerCoordinator(DataUpdateCoordinator[OptimizationResult | Non
             self._last_full_device_write = self._last_device_write
             self._last_write_signature = ("hold", 0.0, 0.0)
         else:
-            command_targets = self._build_command_targets(result)
+            control_intervals = self._effective_control_intervals(result)
+            command_targets = self._build_command_targets_for_intervals(control_intervals)
             target_soc = command_targets.target_soc_percent if command_targets is not None else None
             target_power_kw = command_targets.target_power_kw if command_targets is not None else None
             self.planned_command_target_soc = target_soc
             self.planned_command_target_power_kw = target_power_kw
-            apply_kind, apply_reason = self._should_write_result(result, command_targets)
-            applied_plan = result.intervals[0]
+            apply_kind, apply_reason = self._should_write_plan(control_intervals[0], command_targets)
+            applied_plan = control_intervals[0]
             applied_target_soc = target_soc
             applied_target_power_kw = target_power_kw
             if apply_kind == "skip":
@@ -300,7 +301,7 @@ class BatteryOptimizerCoordinator(DataUpdateCoordinator[OptimizationResult | Non
                 _LOGGER.debug("Battery optimizer deferred inverter write: %s", apply_reason)
                 return apply_reason
             if apply_kind == "current_only":
-                current_only_plan = self._current_only_plan(result.intervals[0])
+                current_only_plan = self._current_only_plan(control_intervals[0])
                 current_only_power_kw = self._current_only_power_kw(current_only_plan, target_power_kw)
                 if (
                     self._is_control_window_locked()
@@ -329,7 +330,7 @@ class BatteryOptimizerCoordinator(DataUpdateCoordinator[OptimizationResult | Non
                 )
             else:
                 command = await self.backend.apply(
-                    result.intervals[0],
+                    control_intervals[0],
                     command_target_soc=target_soc,
                     command_power_kw=target_power_kw,
                 )
@@ -590,10 +591,12 @@ class BatteryOptimizerCoordinator(DataUpdateCoordinator[OptimizationResult | Non
     def _should_write_result(self, result: OptimizationResult, command_targets) -> tuple[str, str]:
         if not result.intervals:
             return "full", "No existing interval command to compare."
+        return self._should_write_plan(result.intervals[0], command_targets)
 
+    def _should_write_plan(self, plan: PlanInterval, command_targets) -> tuple[str, str]:
         now = dt_util.now()
         signature = _command_signature(
-            result.intervals[0],
+            plan,
             command_targets.target_soc_percent if command_targets is not None else None,
             command_targets.target_power_kw if command_targets is not None else None,
         )
@@ -603,7 +606,7 @@ class BatteryOptimizerCoordinator(DataUpdateCoordinator[OptimizationResult | Non
             return "current_only", f"Immediate current-only update because phase current reached {max_phase_current:.1f}A."
 
         planned_snapshot = self.backend.snapshot_for_plan(
-            result.intervals[0],
+            plan,
             command_target_soc=command_targets.target_soc_percent if command_targets is not None else None,
             command_power_kw=command_targets.target_power_kw if command_targets is not None else None,
         )
@@ -619,14 +622,14 @@ class BatteryOptimizerCoordinator(DataUpdateCoordinator[OptimizationResult | Non
 
         if self._last_write_signature is not None and signature[0] != self._last_write_signature[0]:
             mode_change_reason = _mode_change_write_reason(
-                new_mode=result.intervals[0].mode,
+                new_mode=plan.mode,
                 now=now,
                 last_write=self._last_device_write,
             )
             if mode_change_reason is not None:
                 return "full", mode_change_reason
             return "skip", (
-                f"Mode changed to {result.intervals[0].mode.value}, but discharge-related writes wait for the next "
+                f"Mode changed to {plan.mode.value}, but discharge-related writes wait for the next "
                 "15-minute tuning bucket to protect inverter memory."
             )
 
@@ -718,17 +721,22 @@ class BatteryOptimizerCoordinator(DataUpdateCoordinator[OptimizationResult | Non
     def _build_command_targets(self, result: OptimizationResult):
         if not result.intervals or self._last_input_constraints is None:
             return None
+        return self._build_command_targets_for_intervals(self._effective_control_intervals(result))
+
+    def _build_command_targets_for_intervals(self, intervals: list[PlanInterval]):
+        if not intervals or self._last_input_constraints is None:
+            return None
         current_soc = _read_number(self.hass, self.config.get(CONF_BATTERY_SOC_ENTITY))
         if current_soc is None:
-            current_soc = result.intervals[0].projected_soc_percent
+            current_soc = intervals[0].projected_soc_percent
         command_targets = compute_command_targets(
-            result.intervals,
+            intervals,
             self._last_input_constraints,
             current_soc,
             self.adaptive_state,
             DEFAULT_COMMAND_WRITE_INTERVAL_MINUTES,
         )
-        if result.intervals[0].mode is BatteryMode.DISCHARGE:
+        if intervals[0].mode is BatteryMode.DISCHARGE:
             live_load_kw = _read_kw(self.hass, self.config.get(CONF_LOAD_POWER_ENTITY))
             command_targets = replace(
                 command_targets,
@@ -742,6 +750,36 @@ class BatteryOptimizerCoordinator(DataUpdateCoordinator[OptimizationResult | Non
                 ),
             )
         return command_targets
+
+    def _effective_control_intervals(self, result: OptimizationResult) -> list[PlanInterval]:
+        if not result.intervals or self._last_input_constraints is None:
+            return result.intervals if result else []
+        current_soc = _read_number(self.hass, self.config.get(CONF_BATTERY_SOC_ENTITY))
+        if current_soc is None:
+            current_soc = result.intervals[0].projected_soc_percent
+        first = _effective_control_interval(
+            result.intervals[0],
+            intervals=result.intervals,
+            constraints=self._last_input_constraints,
+            current_soc_percent=current_soc,
+            live_load_kw=_read_kw(self.hass, self.config.get(CONF_LOAD_POWER_ENTITY)),
+        )
+        if first is result.intervals[0]:
+            return result.intervals
+        return [first, *result.intervals[1:]]
+
+    def _effective_display_intervals(self, result: OptimizationResult) -> list[PlanInterval]:
+        if not result.intervals or self._last_input_constraints is None:
+            return result.intervals if result else []
+        current_soc = _read_number(self.hass, self.config.get(CONF_BATTERY_SOC_ENTITY))
+        if current_soc is None:
+            current_soc = result.intervals[0].projected_soc_percent
+        return _effective_display_intervals(
+            result.intervals,
+            constraints=self._last_input_constraints,
+            current_soc_percent=current_soc,
+            live_load_kw=_read_kw(self.hass, self.config.get(CONF_LOAD_POWER_ENTITY)),
+        )
 
     def _current_only_plan(self, planned_interval: PlanInterval) -> PlanInterval:
         if not self._is_control_window_locked():
@@ -1183,6 +1221,123 @@ def _accumulate_cost_comparison(totals: dict[str, float], comparison: Electricit
     totals["cost_with_battery"] += comparison.cost_with_battery
 
 
+def _effective_control_interval(
+    interval: PlanInterval,
+    *,
+    intervals: list[PlanInterval],
+    constraints: Any,
+    current_soc_percent: float,
+    live_load_kw: float | None,
+) -> PlanInterval:
+    if interval.mode is not BatteryMode.HOLD:
+        return interval
+
+    charge_target_soc = _charge_command_target_soc(intervals, constraints)
+    if _is_charge_opportunity(interval, constraints) and current_soc_percent + 0.5 < charge_target_soc:
+        return replace(
+            interval,
+            mode=BatteryMode.CHARGE,
+            target_power_kw=constraints.max_charge_kw,
+            projected_soc_percent=max(interval.projected_soc_percent, charge_target_soc),
+            reason=(
+                f"{interval.reason} Live SOC is still below the charge target during a cheap charging window, "
+                "so charging is kept active instead of writing a zero-current hold."
+            ),
+        )
+
+    discharge_load_kw = max(live_load_kw if live_load_kw is not None else interval.load_kw, 0.0)
+    if (
+        _is_discharge_opportunity(interval, constraints)
+        and current_soc_percent > constraints.reserve_soc_percent + 0.5
+        and discharge_load_kw > 0.05
+    ):
+        interval_hours = max(constraints.interval_minutes, 1) / 60
+        discharge_kw = min(discharge_load_kw, constraints.max_discharge_kw)
+        soc_delta_kwh = discharge_kw * interval_hours / max(constraints.discharge_efficiency, 0.01)
+        projected_soc = max(
+            constraints.reserve_soc_percent,
+            current_soc_percent - (soc_delta_kwh / max(constraints.capacity_kwh, 0.1)) * 100,
+        )
+        return replace(
+            interval,
+            mode=BatteryMode.DISCHARGE,
+            target_power_kw=round(discharge_kw, 3),
+            projected_soc_percent=round(projected_soc, 1),
+            reason=(
+                f"{interval.reason} Current price is in an expensive discharge window, so discharge support is "
+                "kept active instead of writing a zero-current hold."
+            ),
+        )
+
+    return interval
+
+
+def _effective_display_intervals(
+    intervals: list[PlanInterval],
+    *,
+    constraints: Any,
+    current_soc_percent: float,
+    live_load_kw: float | None,
+) -> list[PlanInterval]:
+    display: list[PlanInterval] = []
+    running_soc = current_soc_percent
+    charge_target_soc = _charge_command_target_soc(intervals, constraints)
+    charge_valley_active = False
+
+    for index, interval in enumerate(intervals):
+        effective = _effective_control_interval(
+            interval,
+            intervals=intervals[index:],
+            constraints=constraints,
+            current_soc_percent=running_soc,
+            live_load_kw=live_load_kw if index == 0 else None,
+        )
+        if effective.mode is BatteryMode.CHARGE or _is_charge_opportunity(effective, constraints):
+            charge_valley_active = True
+        elif _is_discharge_opportunity(effective, constraints):
+            charge_valley_active = False
+
+        if charge_valley_active and effective.mode is BatteryMode.HOLD:
+            effective = replace(
+                effective,
+                projected_soc_percent=max(effective.projected_soc_percent, min(running_soc, charge_target_soc)),
+                reason=f"{effective.reason} Displayed as flat during the protected charge valley.",
+            )
+        if charge_valley_active and effective.mode is BatteryMode.DISCHARGE and not _is_discharge_opportunity(effective, constraints):
+            effective = replace(
+                effective,
+                mode=BatteryMode.HOLD,
+                target_power_kw=0.0,
+                projected_soc_percent=running_soc,
+                reason=f"{effective.reason} Displayed as hold to avoid charge-valley cycling.",
+            )
+
+        display.append(effective)
+        running_soc = effective.projected_soc_percent
+    return display
+
+
+def _charge_command_target_soc(intervals: list[PlanInterval], constraints: Any) -> float:
+    if (
+        constraints.allow_high_price_full_charge
+        and any(
+            interval.mode is BatteryMode.CHARGE
+            and interval.projected_soc_percent > constraints.preferred_max_soc_percent
+            for interval in intervals
+        )
+    ):
+        return constraints.hard_max_soc_percent
+    return constraints.preferred_max_soc_percent
+
+
+def _is_charge_opportunity(interval: PlanInterval, constraints: Any) -> bool:
+    return interval.price <= constraints.cheap_effective_price
+
+
+def _is_discharge_opportunity(interval: PlanInterval, constraints: Any) -> bool:
+    return interval.price >= constraints.expensive_effective_price
+
+
 def _command_signature(plan: PlanInterval, command_target_soc: float | None, command_power_kw: float | None) -> tuple[Any, ...]:
     target_power_kw = 0.0 if plan.mode is BatteryMode.HOLD else (
         command_power_kw if command_power_kw is not None else plan.target_power_kw
@@ -1338,8 +1493,9 @@ def _build_projected_soc_updates(
 ) -> list[dict[str, Any]]:
     if result is None or not result.intervals:
         return []
+    intervals = coordinator._effective_display_intervals(result)
     updates: list[dict[str, Any]] = []
-    current_interval = result.intervals[0]
+    current_interval = intervals[0]
     current_time = dt_util.as_local(current_interval.start).isoformat()
     current_mode = coordinator._applied_snapshot.mode.value if coordinator._applied_snapshot is not None else current_interval.mode.value
     current_target_power_kw = (
@@ -1368,11 +1524,11 @@ def _build_projected_soc_updates(
         }
     )
     running_soc = current_interval.projected_soc_percent
-    for index, interval in enumerate(result.intervals[1:], start=1):
+    for index, interval in enumerate(intervals[1:], start=1):
         projected_soc = interval.projected_soc_percent
         if interval.mode is BatteryMode.CHARGE and coordinator._last_input_constraints is not None:
             command_targets = compute_command_targets(
-                result.intervals[index:],
+                intervals[index:],
                 coordinator._last_input_constraints,
                 running_soc,
                 coordinator.adaptive_state,
@@ -1399,8 +1555,9 @@ def _build_command_target_updates(
 ) -> list[dict[str, Any]]:
     if result is None or not result.intervals:
         return []
+    intervals = coordinator._effective_display_intervals(result)
     updates: list[dict[str, Any]] = []
-    current_interval = result.intervals[0]
+    current_interval = intervals[0]
     current_time = dt_util.as_local(current_interval.start).isoformat()
     current_target_soc = coordinator.last_command_target_soc
     current_mode = coordinator._applied_snapshot.mode.value if coordinator._applied_snapshot is not None else current_interval.mode.value
@@ -1422,13 +1579,13 @@ def _build_command_target_updates(
         return updates
 
     actual_soc = _read_number(coordinator.hass, coordinator.config.get(CONF_BATTERY_SOC_ENTITY))
-    running_soc = actual_soc if actual_soc is not None else result.intervals[0].projected_soc_percent
-    for index, interval in enumerate(result.intervals):
+    running_soc = actual_soc if actual_soc is not None else intervals[0].projected_soc_percent
+    for index, interval in enumerate(intervals):
         if index == 0:
             running_soc = interval.projected_soc_percent
             continue
         command_targets = compute_command_targets(
-            result.intervals[index:],
+            intervals[index:],
             coordinator._last_input_constraints,
             running_soc,
             coordinator.adaptive_state,

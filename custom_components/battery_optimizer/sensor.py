@@ -618,7 +618,8 @@ def _projected_soc_points_for_day(coordinator: BatteryOptimizerCoordinator, day_
             points.append(current_point)
     if not coordinator.data:
         return points
-    for interval_index, interval in enumerate(coordinator.data.intervals):
+    intervals = _display_intervals(coordinator)
+    for interval_index, interval in enumerate(intervals):
         local_start = dt_util.as_local(interval.start)
         if local_start.date() != target_day:
             continue
@@ -628,7 +629,7 @@ def _projected_soc_points_for_day(coordinator: BatteryOptimizerCoordinator, day_
             actual_soc = _current_actual_soc_percent(coordinator)
             running_soc = actual_soc if actual_soc is not None else interval.projected_soc_percent
             command_targets = compute_command_targets(
-                coordinator.data.intervals[interval_index:],
+                intervals[interval_index:],
                 input_constraints,
                 running_soc,
                 coordinator.adaptive_state,
@@ -675,7 +676,7 @@ def _command_target_soc_points_for_day(coordinator: BatteryOptimizerCoordinator,
     if not coordinator.data or not coordinator.data.intervals or coordinator._last_input_constraints is None:
         return points
 
-    intervals = coordinator.data.intervals
+    intervals = _display_intervals(coordinator)
     actual_soc = _current_actual_soc_percent(coordinator)
     running_soc = actual_soc if actual_soc is not None else intervals[0].projected_soc_percent
     for index, interval in enumerate(intervals):
@@ -721,8 +722,9 @@ def _current_projected_soc_point(coordinator: BatteryOptimizerCoordinator) -> di
             "source": "active_command",
         }
 
-    if coordinator.data and coordinator.data.intervals:
-        planned_interval = coordinator.data.intervals[0]
+    intervals = _display_intervals(coordinator)
+    if intervals:
+        planned_interval = intervals[0]
         projected_soc = planned_interval.projected_soc_percent
         if planned_interval.mode is BatteryMode.CHARGE and coordinator.planned_command_target_soc is not None:
             projected_soc = coordinator.planned_command_target_soc
@@ -749,6 +751,16 @@ def _current_projected_soc_point(coordinator: BatteryOptimizerCoordinator) -> di
         }
 
     return {}
+
+
+def _display_intervals(coordinator: BatteryOptimizerCoordinator) -> list[PlanInterval]:
+    if not coordinator.data or not getattr(coordinator.data, "intervals", None):
+        return []
+    if hasattr(coordinator, "_effective_display_intervals"):
+        return coordinator._effective_display_intervals(coordinator.data)
+    if hasattr(coordinator, "_effective_control_intervals"):
+        return coordinator._effective_control_intervals(coordinator.data)
+    return coordinator.data.intervals
 
 
 def _current_actual_soc_percent(coordinator: BatteryOptimizerCoordinator) -> float | None:

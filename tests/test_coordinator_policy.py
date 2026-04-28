@@ -91,12 +91,16 @@ coordinator = _load_module("custom_components.battery_optimizer.coordinator", BA
 optimizer = sys.modules["custom_components.battery_optimizer.optimizer"]
 
 BatteryMode = optimizer.BatteryMode
+BatteryConstraints = optimizer.BatteryConstraints
+PlanInterval = optimizer.PlanInterval
 current_tuning_due = coordinator._current_tuning_due
 current_only_power_target = coordinator._current_only_power_target
 charge_current_tuning_reason = coordinator._charge_current_tuning_reason
 mode_change_write_reason = coordinator._mode_change_write_reason
 discharge_current_tuning_reason = coordinator._discharge_current_tuning_reason
 discharge_command_power_target_kw = coordinator._discharge_command_power_target_kw
+effective_control_interval = coordinator._effective_control_interval
+effective_display_intervals = coordinator._effective_display_intervals
 
 
 def test_current_tuning_due_only_after_new_quarter_hour_bucket() -> None:
@@ -225,3 +229,94 @@ def test_discharge_command_power_tracks_live_load_up_to_limit() -> None:
         live_load_kw=12.0,
         max_discharge_kw=10.24,
     ) == 10.24
+
+
+def _constraints() -> BatteryConstraints:
+    return BatteryConstraints(
+        capacity_kwh=32.14,
+        soc_percent=50,
+        reserve_soc_percent=10,
+        preferred_max_soc_percent=90,
+        hard_max_soc_percent=100,
+        max_charge_kw=3,
+        max_discharge_kw=8,
+        charge_efficiency=0.95,
+        discharge_efficiency=0.95,
+        degradation_cost_per_kwh=0.01,
+        grid_fee_per_kwh=0.773,
+        interval_minutes=60,
+        min_dwell_intervals=0,
+        price_hysteresis=0.01,
+        very_cheap_spot_price=0.1,
+        cheap_effective_price=1.5,
+        expensive_effective_price=2.5,
+        optimizer_aggressiveness="balanced",
+    )
+
+
+def _plan(mode: BatteryMode, price: float) -> PlanInterval:
+    return PlanInterval(
+        start=datetime(2026, 4, 25, 12, tzinfo=timezone.utc),
+        mode=mode,
+        target_power_kw=0.0,
+        projected_soc_percent=50.0,
+        price=price,
+        load_kw=2.0,
+        grid_import_without_battery_kwh=2.0,
+        grid_import_with_battery_kwh=2.0,
+        cost_without_battery=2.0,
+        cost_with_battery=2.0,
+        electricity_savings=0.0,
+        degradation_cost=0.0,
+        net_value=0.0,
+        reason="test",
+    )
+
+
+def test_hold_in_cheap_window_keeps_charging_until_target_soc() -> None:
+    interval = _plan(BatteryMode.HOLD, price=1.0)
+    effective = effective_control_interval(
+        interval,
+        intervals=[interval],
+        constraints=_constraints(),
+        current_soc_percent=45.0,
+        live_load_kw=2.0,
+    )
+
+    assert effective.mode is BatteryMode.CHARGE
+    assert effective.target_power_kw == 3
+    assert effective.projected_soc_percent == 90
+
+
+def test_hold_in_expensive_window_keeps_discharge_support() -> None:
+    interval = _plan(BatteryMode.HOLD, price=3.0)
+    effective = effective_control_interval(
+        interval,
+        intervals=[interval],
+        constraints=_constraints(),
+        current_soc_percent=70.0,
+        live_load_kw=4.0,
+    )
+
+    assert effective.mode is BatteryMode.DISCHARGE
+    assert effective.target_power_kw == 4.0
+
+
+def test_display_intervals_keep_charge_valley_soc_flat() -> None:
+    intervals = [
+        _plan(BatteryMode.CHARGE, price=1.0),
+        _plan(BatteryMode.HOLD, price=1.1),
+        _plan(BatteryMode.HOLD, price=1.2),
+    ]
+    intervals[0].projected_soc_percent = 90.0
+    intervals[1].projected_soc_percent = 45.0
+    intervals[2].projected_soc_percent = 44.0
+
+    display = effective_display_intervals(
+        intervals,
+        constraints=_constraints(),
+        current_soc_percent=45.0,
+        live_load_kw=2.0,
+    )
+
+    assert [interval.projected_soc_percent for interval in display] == [90.0, 90.0, 90.0]
