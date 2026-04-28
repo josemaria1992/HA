@@ -130,6 +130,18 @@ def test_soc_95_does_not_charge_further_without_strong_future_peak() -> None:
     assert result.intervals[0].mode is not BatteryMode.CHARGE
 
 
+def test_cheap_valley_holds_instead_of_discharge_when_already_charged() -> None:
+    result = optimize(_input([0.4, 0.4, 0.5, 3.2], soc=90, loads=[4.0, 4.0, 4.0, 4.0]))
+
+    assert result.valid
+    assert [interval.mode for interval in result.intervals[:3]] == [
+        BatteryMode.HOLD,
+        BatteryMode.HOLD,
+        BatteryMode.HOLD,
+    ]
+    assert min(interval.projected_soc_percent for interval in result.intervals[:3]) >= 89.0
+
+
 def test_no_export_discharge_is_clamped_to_load() -> None:
     result = optimize(_input([3.5, 3.0, 0.4, 0.3], soc=80, loads=[0.6, 0.5, 0.5, 0.5], max_discharge_kw=12))
 

@@ -809,8 +809,6 @@ def _dp_actions(
         index=index,
         raw_price=raw_price,
         all_in_price=all_in_price,
-        soc_kwh=soc_kwh,
-        max_kwh=max_kwh,
         constraints=constraints,
         strategy=strategy,
     )
@@ -887,23 +885,21 @@ def _filter_actions_for_priority(
     index: int,
     raw_price: float,
     all_in_price: float,
-    soc_kwh: float,
-    max_kwh: float,
     constraints: BatteryConstraints,
     strategy: StrategyContext,
 ) -> list[dict[str, float | BatteryMode | str]]:
     filtered = list(actions)
     charge_available = any(action["mode"] is BatteryMode.CHARGE for action in filtered)
-    charge_room_exists = soc_kwh + 0.01 < max_kwh
 
     if index == 0 and strategy.force_charge_now and charge_available:
         return [action for action in filtered if action["mode"] is BatteryMode.CHARGE]
 
-    if (
-        (index == 0 and strategy.block_discharge_now)
-        or raw_price <= constraints.very_cheap_spot_price + 0.05
-        or (all_in_price <= constraints.cheap_effective_price and charge_room_exists)
-    ):
+    protected_charge_window = (
+        raw_price <= constraints.very_cheap_spot_price + 0.05
+        or all_in_price <= constraints.cheap_effective_price
+        or all_in_price <= strategy.low_threshold
+    )
+    if (index == 0 and strategy.block_discharge_now) or protected_charge_window:
         filtered = [action for action in filtered if action["mode"] is not BatteryMode.DISCHARGE]
 
     if raw_price <= constraints.very_cheap_spot_price + 0.05 and charge_available:
