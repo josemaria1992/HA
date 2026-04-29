@@ -92,6 +92,7 @@ Before real control is enabled, confirm these values in the config flow:
 - `sensor.inverter_battery_voltage` reports battery voltage in volts.
 - `number.inverter_battery_max_charging_current` and `number.inverter_battery_max_discharging_current` are the actual safety current limits in amps.
 - `sensor.inverter_external_ct1_power`, `ct2`, and `ct3` represent live grid import/export per phase. Daily savings uses positive import from these sensors.
+- `sensor.inverter_grid_power` is used for the simple actual grid-cost check. It accumulates positive grid import against the Nord Pool hourly average spot price.
 - Power-based cost tracking now uses each entity's Home Assistant unit metadata (`W` vs `kW`) instead of guessing from the numeric magnitude, so low-watt readings no longer inflate costs.
 - Month-to-date and today cost sensors are backfilled from recorder history when possible. If recorder history or historical price states are missing, they start accumulating from the current runtime.
 - The inverter peak shaving number still expects total watts, but Battery Optimizer watches individual phase currents and dynamically lowers that total-watt threshold when any phase reaches the per-phase limit.
@@ -113,11 +114,15 @@ Created entities include:
 - `sensor.battery_optimizer_daily_savings`
 - `sensor.battery_optimizer_daily_energy_without_battery`
 - `sensor.battery_optimizer_daily_energy_with_battery`
+- `sensor.battery_optimizer_daily_grid_import_cost`
+- `sensor.battery_optimizer_daily_grid_import_energy`
 - `sensor.battery_optimizer_monthly_cost_without_battery`
 - `sensor.battery_optimizer_monthly_cost_with_battery`
 - `sensor.battery_optimizer_monthly_savings`
 - `sensor.battery_optimizer_monthly_energy_without_battery`
 - `sensor.battery_optimizer_monthly_energy_with_battery`
+- `sensor.battery_optimizer_monthly_grid_import_cost`
+- `sensor.battery_optimizer_monthly_grid_import_energy`
 - `sensor.battery_optimizer_price_today_comparison`
 - `sensor.battery_optimizer_price_tomorrow_comparison`
 - `sensor.battery_optimizer_load_forecast`
@@ -442,6 +447,10 @@ cards:
         name: Today's energy without battery
       - entity: sensor.battery_optimizer_daily_energy_with_battery
         name: Today's grid energy with battery
+      - entity: sensor.battery_optimizer_daily_grid_import_cost
+        name: Today's simple grid cost
+      - entity: sensor.battery_optimizer_daily_grid_import_energy
+        name: Today's grid import
 
   - type: entities
     title: Month-To-Date Invoice Estimate
@@ -456,6 +465,10 @@ cards:
         name: Month energy without battery
       - entity: sensor.battery_optimizer_monthly_energy_with_battery
         name: Month grid energy with battery
+      - entity: sensor.battery_optimizer_monthly_grid_import_cost
+        name: Month simple grid cost
+      - entity: sensor.battery_optimizer_monthly_grid_import_energy
+        name: Month grid import
 
   - type: entities
     title: Load Forecast
@@ -611,6 +624,11 @@ Battery Optimizer now keeps two concepts separate:
    - battery wear is **not** included in these savings sensors
 
 2. The optimizer still uses efficiency losses, hysteresis, and degradation cost internally when choosing whether cycling is worth it.
+
+3. `Daily grid import cost` and `Monthly grid import cost` are simple spot-price checks:
+   - positive `sensor.inverter_grid_power` is integrated into kWh
+   - each sample uses the supplier-style hourly average from the four Nord Pool quarter-hour prices
+   - configured grid fees are not added to these simple cost sensors
 
 So the dashboard savings numbers answer the bill question directly, while the planning logic can still stay conservative about battery wear.
 

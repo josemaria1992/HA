@@ -27,6 +27,7 @@ battery_optimizer_pkg.__path__ = [str(BASE)]
 
 costs = _load_module("custom_components.battery_optimizer.costs", BASE / "costs.py")
 build_hourly_average_lookup = costs.build_hourly_average_lookup
+calculate_grid_import_cost = costs.calculate_grid_import_cost
 compare_electricity_costs = costs.compare_electricity_costs
 effective_tracking_start = costs.effective_tracking_start
 
@@ -68,6 +69,41 @@ def test_build_hourly_average_lookup_preserves_hourly_prices() -> None:
         start: 1.8,
         start + timedelta(hours=1): 2.4,
     }
+
+
+def test_calculate_grid_import_cost_matches_grid_samples_to_hourly_prices() -> None:
+    start = datetime(2026, 4, 21, 0, 0)
+    grid_kw = [
+        (start, 1.0),
+        (start + timedelta(minutes=30), 2.0),
+        (start + timedelta(hours=1), 0.5),
+    ]
+    hourly_prices = {
+        start: 2.5,
+        start + timedelta(hours=1): 6.5,
+    }
+
+    totals = calculate_grid_import_cost(grid_kw, hourly_prices, start, start + timedelta(hours=2))
+
+    assert totals.energy_kwh == 2.0
+    assert totals.cost == 7.0
+    assert totals.samples == 24
+
+
+def test_calculate_grid_import_cost_ignores_export_and_missing_prices() -> None:
+    start = datetime(2026, 4, 21, 0, 0)
+    grid_kw = [
+        (start, -1.0),
+        (start + timedelta(minutes=30), 2.0),
+        (start + timedelta(hours=1), 4.0),
+    ]
+    hourly_prices = {start: 2.0}
+
+    totals = calculate_grid_import_cost(grid_kw, hourly_prices, start, start + timedelta(hours=2))
+
+    assert totals.energy_kwh == 1.0
+    assert totals.cost == 2.0
+    assert totals.samples == 12
 
 
 def test_effective_tracking_start_respects_manual_reset() -> None:

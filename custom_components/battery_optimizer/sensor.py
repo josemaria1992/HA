@@ -15,7 +15,7 @@ from homeassistant.helpers.update_coordinator import CoordinatorEntity
 from homeassistant.util import dt as dt_util
 
 from .adaptive import compute_command_targets
-from .const import ATTR_PLAN, ATTR_REASONS, ATTR_WINDOWS, DOMAIN
+from .const import ATTR_PLAN, ATTR_REASONS, ATTR_WINDOWS, CONF_GRID_POWER_ENTITY, DEFAULT_GRID_POWER_ENTITY, DOMAIN
 from .coordinator import BatteryOptimizerCoordinator, get_coordinator
 from .ingestion import build_price_comparison
 from .optimizer import BatteryMode
@@ -128,6 +128,20 @@ SENSORS: tuple[BatteryOptimizerSensorDescription, ...] = (
         attrs_fn=lambda coordinator: _daily_attrs(coordinator),
     ),
     BatteryOptimizerSensorDescription(
+        key="daily_grid_import_cost",
+        translation_key="daily_grid_import_cost",
+        native_unit_of_measurement="SEK",
+        value_fn=lambda coordinator: round(coordinator.daily_grid_import_cost, 2),
+        attrs_fn=lambda coordinator: _grid_cost_daily_attrs(coordinator),
+    ),
+    BatteryOptimizerSensorDescription(
+        key="daily_grid_import_energy",
+        translation_key="daily_grid_import_energy",
+        native_unit_of_measurement="kWh",
+        value_fn=lambda coordinator: round(coordinator.daily_grid_import_energy_kwh, 3),
+        attrs_fn=lambda coordinator: _grid_cost_daily_attrs(coordinator),
+    ),
+    BatteryOptimizerSensorDescription(
         key="monthly_cost_without_battery",
         translation_key="monthly_cost_without_battery",
         native_unit_of_measurement="SEK",
@@ -161,6 +175,20 @@ SENSORS: tuple[BatteryOptimizerSensorDescription, ...] = (
         native_unit_of_measurement="kWh",
         value_fn=lambda coordinator: round(coordinator.monthly_energy_with_battery_kwh, 3),
         attrs_fn=lambda coordinator: _monthly_attrs(coordinator),
+    ),
+    BatteryOptimizerSensorDescription(
+        key="monthly_grid_import_cost",
+        translation_key="monthly_grid_import_cost",
+        native_unit_of_measurement="SEK",
+        value_fn=lambda coordinator: round(coordinator.monthly_grid_import_cost, 2),
+        attrs_fn=lambda coordinator: _grid_cost_monthly_attrs(coordinator),
+    ),
+    BatteryOptimizerSensorDescription(
+        key="monthly_grid_import_energy",
+        translation_key="monthly_grid_import_energy",
+        native_unit_of_measurement="kWh",
+        value_fn=lambda coordinator: round(coordinator.monthly_grid_import_energy_kwh, 3),
+        attrs_fn=lambda coordinator: _grid_cost_monthly_attrs(coordinator),
     ),
     BatteryOptimizerSensorDescription(
         key="price_today_comparison",
@@ -461,6 +489,36 @@ def _monthly_attrs(coordinator: BatteryOptimizerCoordinator) -> dict[str, Any]:
         "reset_at": coordinator.cost_tracking_reset_at.isoformat() if coordinator.cost_tracking_reset_at else None,
         "currency": "SEK",
         "method": "Electricity-only month-to-date accumulator. Baseline prefers the live load sensor and falls back to the optimizer load estimate. Actual cost prefers positive grid import from the three phase power sensors and falls back to the optimizer grid-import estimate. Pricing uses the Nord Pool supplier-style hourly average plus configured taxes and fees. Battery wear is not included in monthly savings.",
+    }
+
+
+def _grid_cost_daily_attrs(coordinator: BatteryOptimizerCoordinator) -> dict[str, Any]:
+    grid_entity = coordinator.config.get(CONF_GRID_POWER_ENTITY) or DEFAULT_GRID_POWER_ENTITY
+    return {
+        "date": coordinator.daily_date.isoformat(),
+        "daily_grid_import_cost": round(coordinator.daily_grid_import_cost, 4),
+        "daily_grid_import_energy_kwh": round(coordinator.daily_grid_import_energy_kwh, 4),
+        "grid_power_entity": grid_entity,
+        "price_entity": coordinator.config.get("price_entity"),
+        "tracking_status": coordinator.grid_cost_tracking_status,
+        "reset_at": coordinator.cost_tracking_reset_at.isoformat() if coordinator.cost_tracking_reset_at else None,
+        "currency": "SEK",
+        "method": "Actual grid-import cost. Positive grid power is accumulated as kWh and multiplied by the Nord Pool supplier-style hourly average spot price. Configured grid fees are not added to this simple cost check.",
+    }
+
+
+def _grid_cost_monthly_attrs(coordinator: BatteryOptimizerCoordinator) -> dict[str, Any]:
+    grid_entity = coordinator.config.get(CONF_GRID_POWER_ENTITY) or DEFAULT_GRID_POWER_ENTITY
+    return {
+        "month": coordinator.month_key,
+        "monthly_grid_import_cost": round(coordinator.monthly_grid_import_cost, 4),
+        "monthly_grid_import_energy_kwh": round(coordinator.monthly_grid_import_energy_kwh, 4),
+        "grid_power_entity": grid_entity,
+        "price_entity": coordinator.config.get("price_entity"),
+        "tracking_status": coordinator.grid_cost_tracking_status,
+        "reset_at": coordinator.cost_tracking_reset_at.isoformat() if coordinator.cost_tracking_reset_at else None,
+        "currency": "SEK",
+        "method": "Month-to-date actual grid-import cost. Positive grid power is accumulated as kWh and multiplied by the Nord Pool supplier-style hourly average spot price. Configured grid fees are not added to this simple cost check.",
     }
 
 

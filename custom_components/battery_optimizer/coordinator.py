@@ -31,6 +31,7 @@ from .backend import CommandSnapshot, SolarmanBackend
 from .costs import (
     ElectricityCostComparison,
     build_hourly_average_lookup,
+    calculate_grid_import_cost,
     compare_electricity_costs,
     effective_tracking_start,
 )
@@ -41,6 +42,7 @@ from .const import (
     CONF_FORECAST_RELIABILITY_MAX_RELATIVE_MAE,
     CONF_FORECAST_RELIABILITY_MIN_SAMPLES,
     CONF_GRID_FEE_PER_KWH,
+    CONF_GRID_POWER_ENTITY,
     CONF_LOAD_POWER_ENTITY,
     CONF_PEAK_SHAVING_A,
     CONF_PHASE_CURRENT_ENTITIES,
@@ -51,6 +53,7 @@ from .const import (
     DEFAULT_FORECAST_RELIABILITY_MAX_RELATIVE_MAE,
     DEFAULT_FORECAST_RELIABILITY_MIN_SAMPLES,
     DEFAULT_GRID_FEE_PER_KWH,
+    DEFAULT_GRID_POWER_ENTITY,
     DEFAULT_RECONCILE_RETRY_MINUTES,
     DEFAULT_SCAN_INTERVAL,
     DOMAIN,
@@ -87,15 +90,20 @@ class BatteryOptimizerCoordinator(DataUpdateCoordinator[OptimizationResult | Non
         self.daily_savings = 0.0
         self.daily_energy_without_battery_kwh = 0.0
         self.daily_energy_with_battery_kwh = 0.0
+        self.daily_grid_import_energy_kwh = 0.0
+        self.daily_grid_import_cost = 0.0
         self.daily_date = dt_util.now().date()
         self.monthly_cost_without_battery = 0.0
         self.monthly_cost_with_battery = 0.0
         self.monthly_savings = 0.0
         self.monthly_energy_without_battery_kwh = 0.0
         self.monthly_energy_with_battery_kwh = 0.0
+        self.monthly_grid_import_energy_kwh = 0.0
+        self.monthly_grid_import_cost = 0.0
         self.month_key = _month_key(dt_util.now().date())
         self.cost_tracking_reset_at: datetime | None = None
         self.cost_tracking_status = "Waiting for first runtime sample."
+        self.grid_cost_tracking_status = "Waiting for first runtime sample."
         self.load_forecast: list[ForecastPoint] = []
         self.load_forecast_history: list[ForecastPoint] = []
         self.projected_soc_history: list[dict[str, Any]] = []
@@ -147,12 +155,16 @@ class BatteryOptimizerCoordinator(DataUpdateCoordinator[OptimizationResult | Non
             self.daily_savings = float(stored.get("savings", 0))
             self.daily_energy_without_battery_kwh = float(stored.get("energy_without_battery_kwh", 0))
             self.daily_energy_with_battery_kwh = float(stored.get("energy_with_battery_kwh", 0))
+            self.daily_grid_import_energy_kwh = float(stored.get("grid_import_energy_kwh", 0))
+            self.daily_grid_import_cost = float(stored.get("grid_import_cost", 0))
         if stored.get("month") == self.month_key:
             self.monthly_cost_without_battery = float(stored.get("monthly_cost_without_battery", 0))
             self.monthly_cost_with_battery = float(stored.get("monthly_cost_with_battery", 0))
             self.monthly_savings = float(stored.get("monthly_savings", 0))
             self.monthly_energy_without_battery_kwh = float(stored.get("monthly_energy_without_battery_kwh", 0))
             self.monthly_energy_with_battery_kwh = float(stored.get("monthly_energy_with_battery_kwh", 0))
+            self.monthly_grid_import_energy_kwh = float(stored.get("monthly_grid_import_energy_kwh", 0))
+            self.monthly_grid_import_cost = float(stored.get("monthly_grid_import_cost", 0))
         self.adaptive_state = AdaptiveState(
             load_bias_kw=float(stored.get("adaptive_load_bias_kw", 0.0)),
             charge_response_factor=float(stored.get("adaptive_charge_response_factor", 1.0)),
@@ -387,15 +399,22 @@ class BatteryOptimizerCoordinator(DataUpdateCoordinator[OptimizationResult | Non
         self.daily_savings = 0.0
         self.daily_energy_without_battery_kwh = 0.0
         self.daily_energy_with_battery_kwh = 0.0
+        self.daily_grid_import_energy_kwh = 0.0
+        self.daily_grid_import_cost = 0.0
         self.monthly_cost_without_battery = 0.0
         self.monthly_cost_with_battery = 0.0
         self.monthly_savings = 0.0
         self.monthly_energy_without_battery_kwh = 0.0
         self.monthly_energy_with_battery_kwh = 0.0
+        self.monthly_grid_import_energy_kwh = 0.0
+        self.monthly_grid_import_cost = 0.0
         self.cost_tracking_reset_at = now
         self._last_daily_sample = now
         self.cost_tracking_status = (
             f"Cost tracking was reset to 0 at {now.strftime('%Y-%m-%d %H:%M:%S')} and will accumulate from the next sample."
+        )
+        self.grid_cost_tracking_status = (
+            f"Grid import cost tracking was reset to 0 at {now.strftime('%Y-%m-%d %H:%M:%S')} and will accumulate from the next sample."
         )
         await self._async_store_daily_totals()
         self.async_update_listeners()
@@ -450,6 +469,8 @@ class BatteryOptimizerCoordinator(DataUpdateCoordinator[OptimizationResult | Non
             self.daily_savings = 0.0
             self.daily_energy_without_battery_kwh = 0.0
             self.daily_energy_with_battery_kwh = 0.0
+            self.daily_grid_import_energy_kwh = 0.0
+            self.daily_grid_import_cost = 0.0
             self._last_daily_sample = None
         current_month = _month_key(today)
         if current_month != self.month_key:
@@ -459,10 +480,13 @@ class BatteryOptimizerCoordinator(DataUpdateCoordinator[OptimizationResult | Non
             self.monthly_savings = 0.0
             self.monthly_energy_without_battery_kwh = 0.0
             self.monthly_energy_with_battery_kwh = 0.0
+            self.monthly_grid_import_energy_kwh = 0.0
+            self.monthly_grid_import_cost = 0.0
 
         if self._last_daily_sample is None:
             self._last_daily_sample = now
             self.cost_tracking_status = "Waiting for the next runtime sample to start accumulating costs."
+            self.grid_cost_tracking_status = "Waiting for the next runtime sample to start accumulating grid import cost."
             await self._async_store_daily_totals()
             return
 
@@ -470,6 +494,9 @@ class BatteryOptimizerCoordinator(DataUpdateCoordinator[OptimizationResult | Non
         self._last_daily_sample = now
         if elapsed_hours <= 0 or elapsed_hours > 0.25:
             self.cost_tracking_status = "Skipped cost sample because the runtime interval was outside the valid sampling window."
+            self.grid_cost_tracking_status = (
+                "Skipped grid import cost sample because the runtime interval was outside the valid sampling window."
+            )
             await self._async_store_daily_totals()
             return
 
@@ -480,6 +507,7 @@ class BatteryOptimizerCoordinator(DataUpdateCoordinator[OptimizationResult | Non
             now,
         )
         price = billing_price + fee if billing_price is not None else None
+        self._accumulate_grid_import_cost_sample(elapsed_hours, billing_price, price_source)
         load_kw = _read_kw(self.hass, self.config.get(CONF_LOAD_POWER_ENTITY))
         load_source = "live load sensor"
         if load_kw is None and result.intervals:
@@ -525,6 +553,39 @@ class BatteryOptimizerCoordinator(DataUpdateCoordinator[OptimizationResult | Non
         )
         await self._async_store_daily_totals()
 
+    def _accumulate_grid_import_cost_sample(
+        self,
+        elapsed_hours: float,
+        billing_price: float | None,
+        price_source: str,
+    ) -> None:
+        """Accumulate actual grid-import cost from the dedicated grid power sensor."""
+
+        grid_entity = self.config.get(CONF_GRID_POWER_ENTITY) or DEFAULT_GRID_POWER_ENTITY
+        grid_kw = _read_kw(self.hass, grid_entity)
+        if billing_price is None or grid_kw is None:
+            missing_parts: list[str] = []
+            if billing_price is None:
+                missing_parts.append("hourly-average price")
+            if grid_kw is None:
+                missing_parts.append(f"grid power sensor {grid_entity}")
+            self.grid_cost_tracking_status = (
+                "Grid import cost sample skipped because "
+                + ", ".join(missing_parts)
+                + " was unavailable."
+            )
+            return
+
+        actual_kwh = max(grid_kw, 0.0) * elapsed_hours
+        cost = actual_kwh * max(billing_price, 0.0)
+        self.daily_grid_import_energy_kwh += actual_kwh
+        self.daily_grid_import_cost += cost
+        self.monthly_grid_import_energy_kwh += actual_kwh
+        self.monthly_grid_import_cost += cost
+        self.grid_cost_tracking_status = (
+            f"Accumulating actual grid import from {grid_entity} using {price_source} spot price."
+        )
+
     async def _async_store_daily_totals(self) -> None:
         await self._store.async_save(
             {
@@ -534,12 +595,16 @@ class BatteryOptimizerCoordinator(DataUpdateCoordinator[OptimizationResult | Non
                 "savings": round(self.daily_savings, 4),
                 "energy_without_battery_kwh": round(self.daily_energy_without_battery_kwh, 4),
                 "energy_with_battery_kwh": round(self.daily_energy_with_battery_kwh, 4),
+                "grid_import_energy_kwh": round(self.daily_grid_import_energy_kwh, 4),
+                "grid_import_cost": round(self.daily_grid_import_cost, 4),
                 "month": self.month_key,
                 "monthly_cost_without_battery": round(self.monthly_cost_without_battery, 4),
                 "monthly_cost_with_battery": round(self.monthly_cost_with_battery, 4),
                 "monthly_savings": round(self.monthly_savings, 4),
                 "monthly_energy_without_battery_kwh": round(self.monthly_energy_without_battery_kwh, 4),
                 "monthly_energy_with_battery_kwh": round(self.monthly_energy_with_battery_kwh, 4),
+                "monthly_grid_import_energy_kwh": round(self.monthly_grid_import_energy_kwh, 4),
+                "monthly_grid_import_cost": round(self.monthly_grid_import_cost, 4),
                 "cost_tracking_reset_at": self.cost_tracking_reset_at.isoformat() if self.cost_tracking_reset_at else None,
                 "adaptive_load_bias_kw": round(self.adaptive_state.load_bias_kw, 4),
                 "adaptive_charge_response_factor": round(self.adaptive_state.charge_response_factor, 4),
@@ -563,30 +628,55 @@ class BatteryOptimizerCoordinator(DataUpdateCoordinator[OptimizationResult | Non
             now,
             today_tracking_start,
         )
+        grid_estimates = await self.hass.async_add_executor_job(
+            _estimate_grid_import_cost_from_history,
+            self.hass,
+            self.config,
+            month_tracking_start,
+            now,
+            today_tracking_start,
+        )
+        backfilled = False
         if not estimates:
             if self.monthly_cost_with_battery == 0 and self.monthly_energy_with_battery_kwh == 0:
                 self.cost_tracking_status = "Recorder backfill unavailable; month totals will accumulate from runtime samples."
-            return False
-        month = estimates["month"]
-        today = estimates["today"]
-        self.monthly_cost_without_battery = month["cost_without_battery"]
-        self.monthly_cost_with_battery = month["cost_with_battery"]
-        self.monthly_savings = month["cost_without_battery"] - month["cost_with_battery"]
-        self.monthly_energy_without_battery_kwh = month["energy_without_battery_kwh"]
-        self.monthly_energy_with_battery_kwh = month["energy_with_battery_kwh"]
-        self.daily_cost_without_battery = today["cost_without_battery"]
-        self.daily_cost_with_battery = today["cost_with_battery"]
-        self.daily_savings = today["cost_without_battery"] - today["cost_with_battery"]
-        self.daily_energy_without_battery_kwh = today["energy_without_battery_kwh"]
-        self.daily_energy_with_battery_kwh = today["energy_with_battery_kwh"]
-        if self.cost_tracking_reset_at is not None:
-            self.cost_tracking_status = (
-                "Month and day totals were backfilled from recorder history starting at the last manual reset."
-            )
         else:
-            self.cost_tracking_status = "Month and day totals were backfilled from recorder history."
+            month = estimates["month"]
+            today = estimates["today"]
+            self.monthly_cost_without_battery = month["cost_without_battery"]
+            self.monthly_cost_with_battery = month["cost_with_battery"]
+            self.monthly_savings = month["cost_without_battery"] - month["cost_with_battery"]
+            self.monthly_energy_without_battery_kwh = month["energy_without_battery_kwh"]
+            self.monthly_energy_with_battery_kwh = month["energy_with_battery_kwh"]
+            self.daily_cost_without_battery = today["cost_without_battery"]
+            self.daily_cost_with_battery = today["cost_with_battery"]
+            self.daily_savings = today["cost_without_battery"] - today["cost_with_battery"]
+            self.daily_energy_without_battery_kwh = today["energy_without_battery_kwh"]
+            self.daily_energy_with_battery_kwh = today["energy_with_battery_kwh"]
+            if self.cost_tracking_reset_at is not None:
+                self.cost_tracking_status = (
+                    "Month and day totals were backfilled from recorder history starting at the last manual reset."
+                )
+            else:
+                self.cost_tracking_status = "Month and day totals were backfilled from recorder history."
+            backfilled = True
+        if grid_estimates:
+            month = grid_estimates["month"]
+            today = grid_estimates["today"]
+            self.monthly_grid_import_energy_kwh = month["energy_kwh"]
+            self.monthly_grid_import_cost = month["cost"]
+            self.daily_grid_import_energy_kwh = today["energy_kwh"]
+            self.daily_grid_import_cost = today["cost"]
+            self.grid_cost_tracking_status = (
+                "Actual grid import cost was backfilled from recorder history using hourly-average spot prices."
+            )
+            backfilled = True
+        elif self.monthly_grid_import_cost == 0 and self.monthly_grid_import_energy_kwh == 0:
+            self.grid_cost_tracking_status = (
+                "Grid import recorder backfill unavailable; totals will accumulate from runtime samples."
+            )
         await self._async_store_daily_totals()
-        return True
+        return backfilled
 
     def _should_write_result(self, result: OptimizationResult, command_targets) -> tuple[str, str]:
         if not result.intervals:
@@ -1120,6 +1210,44 @@ def _estimate_costs_from_history(
             _add_cost_sample(today, baseline_kwh, actual_kwh, all_in_price)
         cursor = next_cursor
     return {"month": month, "today": today}
+
+
+def _estimate_grid_import_cost_from_history(
+    hass: HomeAssistant,
+    config: dict[str, Any],
+    start: datetime,
+    end: datetime,
+    today_start: datetime,
+) -> dict[str, dict[str, float]] | None:
+    """Estimate actual grid-import cost from recorder history."""
+
+    price_entity = config.get(CONF_PRICE_ENTITY)
+    grid_entity = config.get(CONF_GRID_POWER_ENTITY) or DEFAULT_GRID_POWER_ENTITY
+    if not price_entity or not grid_entity:
+        return None
+    histories = _history_series(hass, [price_entity, grid_entity], start, end)
+    if not histories:
+        return None
+    hourly_price_lookup = build_hourly_average_lookup(histories.get(price_entity, []), start, end)
+    if not hourly_price_lookup:
+        return None
+    unit = _entity_unit(hass, grid_entity)
+    grid_kw_series = [
+        (point_time, power_value_to_kw(point_value, unit))
+        for point_time, point_value in histories.get(grid_entity, [])
+    ]
+    if not grid_kw_series:
+        return None
+
+    month_totals = calculate_grid_import_cost(grid_kw_series, hourly_price_lookup, start, end)
+    today_period_start = max(start, today_start)
+    today_totals = calculate_grid_import_cost(grid_kw_series, hourly_price_lookup, today_period_start, end)
+    if month_totals.samples == 0 and today_totals.samples == 0:
+        return None
+    return {
+        "month": {"energy_kwh": month_totals.energy_kwh, "cost": month_totals.cost},
+        "today": {"energy_kwh": today_totals.energy_kwh, "cost": today_totals.cost},
+    }
 
 
 def _history_series(

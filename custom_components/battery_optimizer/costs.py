@@ -18,6 +18,15 @@ class ElectricityCostComparison:
     electricity_savings: float
 
 
+@dataclass(frozen=True)
+class GridImportCostTotals:
+    """Actual grid-import energy and spot-price cost for a period."""
+
+    energy_kwh: float
+    cost: float
+    samples: int
+
+
 def compare_electricity_costs(
     baseline_kwh: float,
     actual_grid_kwh: float,
@@ -99,6 +108,38 @@ def build_hourly_average_lookup(
     return lookup
 
 
+def calculate_grid_import_cost(
+    grid_kw_series: list[tuple[datetime, float]],
+    hourly_price_lookup: dict[datetime, float],
+    start: datetime,
+    end: datetime,
+    *,
+    step: timedelta = timedelta(minutes=5),
+) -> GridImportCostTotals:
+    """Accumulate positive grid import against supplier-style hourly prices."""
+
+    if end <= start or step.total_seconds() <= 0:
+        return GridImportCostTotals(0.0, 0.0, 0)
+
+    energy_kwh = 0.0
+    cost = 0.0
+    samples = 0
+    cursor = start
+    while cursor < end:
+        next_cursor = min(cursor + step, end)
+        grid_kw = _series_value_at(grid_kw_series, cursor)
+        hour_start = cursor.replace(minute=0, second=0, microsecond=0)
+        price = hourly_price_lookup.get(hour_start)
+        if grid_kw is not None and price is not None:
+            sample_kwh = max(grid_kw, 0.0) * (next_cursor - cursor).total_seconds() / 3600
+            energy_kwh += sample_kwh
+            cost += sample_kwh * max(price, 0.0)
+            samples += 1
+        cursor = next_cursor
+
+    return GridImportCostTotals(round(energy_kwh, 6), round(cost, 6), samples)
+
+
 def effective_tracking_start(
     period_start: datetime,
     now: datetime,
@@ -111,3 +152,12 @@ def effective_tracking_start(
     if reset_at >= now:
         return now
     return max(period_start, reset_at)
+
+
+def _series_value_at(series: list[tuple[datetime, float]], when: datetime) -> float | None:
+    value = None
+    for point_time, point_value in series:
+        if point_time > when:
+            break
+        value = point_value
+    return value
