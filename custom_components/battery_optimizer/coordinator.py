@@ -1243,26 +1243,22 @@ def _effective_control_interval(
         return interval
 
     charge_target_soc = _charge_command_target_soc(intervals, constraints)
-    if _is_charge_opportunity(interval, constraints) and current_soc_percent + 0.5 < charge_target_soc:
+    if _is_charge_opportunity(interval, constraints):
         return replace(
             interval,
             mode=BatteryMode.CHARGE,
             target_power_kw=constraints.max_charge_kw,
             projected_soc_percent=max(interval.projected_soc_percent, charge_target_soc),
             reason=(
-                f"{interval.reason} Live SOC is still below the charge target during a cheap charging window, "
-                "so charging is kept active instead of writing a zero-current hold."
+                f"{interval.reason} This is a cheap charging window, so the charge command is kept active "
+                "instead of using hold as a pause."
             ),
         )
 
     discharge_load_kw = max(live_load_kw if live_load_kw is not None else interval.load_kw, 0.0)
-    if (
-        _is_discharge_opportunity(interval, constraints)
-        and current_soc_percent > constraints.reserve_soc_percent + 0.5
-        and discharge_load_kw > 0.05
-    ):
+    if _is_discharge_opportunity(interval, constraints) and current_soc_percent > constraints.reserve_soc_percent + 0.5:
         interval_hours = max(constraints.interval_minutes, 1) / 60
-        discharge_kw = min(discharge_load_kw, constraints.max_discharge_kw)
+        discharge_kw = min(max(discharge_load_kw, interval.target_power_kw, 0.1), constraints.max_discharge_kw)
         soc_delta_kwh = discharge_kw * interval_hours / max(constraints.discharge_efficiency, 0.01)
         projected_soc = max(
             constraints.reserve_soc_percent,

@@ -289,6 +289,21 @@ def test_hold_in_cheap_window_keeps_charging_until_target_soc() -> None:
     assert effective.projected_soc_percent == 90
 
 
+def test_hold_in_cheap_window_keeps_charge_command_even_at_target_soc() -> None:
+    interval = _plan(BatteryMode.HOLD, price=1.0)
+    effective = effective_control_interval(
+        interval,
+        intervals=[interval],
+        constraints=_constraints(),
+        current_soc_percent=92.0,
+        live_load_kw=2.0,
+    )
+
+    assert effective.mode is BatteryMode.CHARGE
+    assert effective.target_power_kw == 3
+    assert effective.projected_soc_percent == 90
+
+
 def test_hold_in_expensive_window_keeps_discharge_support() -> None:
     interval = _plan(BatteryMode.HOLD, price=3.0)
     effective = effective_control_interval(
@@ -301,6 +316,20 @@ def test_hold_in_expensive_window_keeps_discharge_support() -> None:
 
     assert effective.mode is BatteryMode.DISCHARGE
     assert effective.target_power_kw == 4.0
+
+
+def test_hold_in_expensive_window_keeps_discharge_command_with_zero_live_load() -> None:
+    interval = _plan(BatteryMode.HOLD, price=3.0)
+    effective = effective_control_interval(
+        interval,
+        intervals=[interval],
+        constraints=_constraints(),
+        current_soc_percent=70.0,
+        live_load_kw=0.0,
+    )
+
+    assert effective.mode is BatteryMode.DISCHARGE
+    assert effective.target_power_kw > 0.0
 
 
 def test_display_intervals_keep_charge_valley_soc_flat() -> None:
