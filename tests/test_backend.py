@@ -107,3 +107,31 @@ def test_discharge_current_uses_requested_value_above_floor() -> None:
     amps = solarman._discharge_current_amps(4.0)
 
     assert round(amps, 1) == round(4000 / 51.2, 1)
+
+
+def test_discharge_power_clamp_ignores_transient_zero_live_load() -> None:
+    states = {
+        "sensor.live_load": SimpleNamespace(state="0", attributes={"unit_of_measurement": "kW"}),
+    }
+    hass = SimpleNamespace(states=SimpleNamespace(get=lambda entity_id: states.get(entity_id)))
+    config = {
+        "load_power_entity": "sensor.live_load",
+    }
+
+    solarman = SolarmanBackend(hass, config)
+
+    assert solarman._clamp_discharge_power_kw(3.0) == 3.0
+
+
+def test_discharge_power_clamp_still_limits_to_real_live_load() -> None:
+    states = {
+        "sensor.live_load": SimpleNamespace(state="1.2", attributes={"unit_of_measurement": "kW"}),
+    }
+    hass = SimpleNamespace(states=SimpleNamespace(get=lambda entity_id: states.get(entity_id)))
+    config = {
+        "load_power_entity": "sensor.live_load",
+    }
+
+    solarman = SolarmanBackend(hass, config)
+
+    assert solarman._clamp_discharge_power_kw(3.0) == 1.2

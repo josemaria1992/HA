@@ -377,6 +377,8 @@ class SolarmanBackend:
         live_load_kw = self._live_load_kw()
         if live_load_kw is None:
             return max(target_kw, 0.0)
+        if target_kw > 0.0 and live_load_kw <= 0.05:
+            return max(target_kw, 0.0)
         return max(min(target_kw, live_load_kw), 0.0)
 
     def _charge_target_soc(self, plan: PlanInterval, current_soc: float) -> float:

@@ -757,12 +757,22 @@ class BatteryOptimizerCoordinator(DataUpdateCoordinator[OptimizationResult | Non
         current_soc = _read_number(self.hass, self.config.get(CONF_BATTERY_SOC_ENTITY))
         if current_soc is None:
             current_soc = result.intervals[0].projected_soc_percent
+        live_load_kw = _read_kw(self.hass, self.config.get(CONF_LOAD_POWER_ENTITY))
         first = _effective_control_interval(
             result.intervals[0],
             intervals=result.intervals,
             constraints=self._last_input_constraints,
             current_soc_percent=current_soc,
-            live_load_kw=_read_kw(self.hass, self.config.get(CONF_LOAD_POWER_ENTITY)),
+            live_load_kw=live_load_kw,
+        )
+        first = _continue_active_command_interval(
+            first,
+            applied_snapshot=self._applied_snapshot,
+            last_command_target_soc=self.last_command_target_soc,
+            planned_command_target_soc=self.planned_command_target_soc,
+            constraints=self._last_input_constraints,
+            current_soc_percent=current_soc,
+            live_load_kw=live_load_kw,
         )
         if first is result.intervals[0]:
             return result.intervals
@@ -1268,6 +1278,60 @@ def _effective_control_interval(
                 "kept active instead of writing a zero-current hold."
             ),
         )
+
+    return interval
+
+
+def _continue_active_command_interval(
+    interval: PlanInterval,
+    *,
+    applied_snapshot: CommandSnapshot | None,
+    last_command_target_soc: float | None,
+    planned_command_target_soc: float | None,
+    constraints: Any,
+    current_soc_percent: float,
+    live_load_kw: float | None,
+) -> PlanInterval:
+    if interval.mode is not BatteryMode.HOLD or applied_snapshot is None:
+        return interval
+
+    if applied_snapshot.mode is BatteryMode.CHARGE:
+        target_soc = last_command_target_soc or planned_command_target_soc or constraints.preferred_max_soc_percent
+        if current_soc_percent + 0.5 < target_soc:
+            return replace(
+                interval,
+                mode=BatteryMode.CHARGE,
+                target_power_kw=constraints.max_charge_kw,
+                projected_soc_percent=max(interval.projected_soc_percent, target_soc),
+                reason=(
+                    f"{interval.reason} Continuing the active charge command until SOC reaches "
+                    f"{target_soc:.0f}% instead of writing 0A during a hold gap."
+                ),
+            )
+
+    if applied_snapshot.mode is BatteryMode.DISCHARGE:
+        discharge_load_kw = max(live_load_kw if live_load_kw is not None else interval.load_kw, 0.0)
+        discharge_kw = min(
+            max(discharge_load_kw, interval.target_power_kw, 0.1),
+            constraints.max_discharge_kw,
+        )
+        if current_soc_percent > constraints.reserve_soc_percent + 0.5:
+            interval_hours = max(constraints.interval_minutes, 1) / 60
+            soc_delta_kwh = discharge_kw * interval_hours / max(constraints.discharge_efficiency, 0.01)
+            projected_soc = max(
+                constraints.reserve_soc_percent,
+                current_soc_percent - (soc_delta_kwh / max(constraints.capacity_kwh, 0.1)) * 100,
+            )
+            return replace(
+                interval,
+                mode=BatteryMode.DISCHARGE,
+                target_power_kw=round(discharge_kw, 3),
+                projected_soc_percent=round(projected_soc, 1),
+                reason=(
+                    f"{interval.reason} Continuing the active discharge command until reserve SOC is reached "
+                    "instead of writing 0A during a hold gap."
+                ),
+            )
 
     return interval
 

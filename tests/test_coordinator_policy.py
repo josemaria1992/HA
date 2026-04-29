@@ -101,6 +101,7 @@ discharge_current_tuning_reason = coordinator._discharge_current_tuning_reason
 discharge_command_power_target_kw = coordinator._discharge_command_power_target_kw
 effective_control_interval = coordinator._effective_control_interval
 effective_display_intervals = coordinator._effective_display_intervals
+continue_active_command_interval = coordinator._continue_active_command_interval
 
 
 def test_current_tuning_due_only_after_new_quarter_hour_bucket() -> None:
@@ -335,3 +336,36 @@ def test_display_intervals_show_discharge_at_reserve_floor() -> None:
 
     assert display[0].mode is BatteryMode.DISCHARGE
     assert display[0].projected_soc_percent == 10
+
+
+def test_active_charge_continues_through_hold_gap_until_target_soc() -> None:
+    interval = _plan(BatteryMode.HOLD, price=1.8)
+    effective = continue_active_command_interval(
+        interval,
+        applied_snapshot=SimpleNamespace(mode=BatteryMode.CHARGE),
+        last_command_target_soc=90.0,
+        planned_command_target_soc=90.0,
+        constraints=_constraints(),
+        current_soc_percent=75.0,
+        live_load_kw=2.0,
+    )
+
+    assert effective.mode is BatteryMode.CHARGE
+    assert effective.target_power_kw == 3
+    assert effective.projected_soc_percent == 90
+
+
+def test_active_discharge_continues_through_hold_gap_above_reserve() -> None:
+    interval = _plan(BatteryMode.HOLD, price=2.0)
+    effective = continue_active_command_interval(
+        interval,
+        applied_snapshot=SimpleNamespace(mode=BatteryMode.DISCHARGE),
+        last_command_target_soc=10.0,
+        planned_command_target_soc=10.0,
+        constraints=_constraints(),
+        current_soc_percent=55.0,
+        live_load_kw=0.0,
+    )
+
+    assert effective.mode is BatteryMode.DISCHARGE
+    assert effective.target_power_kw > 0.0
