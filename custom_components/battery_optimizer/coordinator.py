@@ -32,6 +32,7 @@ from .costs import (
     ElectricityCostComparison,
     build_hourly_average_lookup,
     calculate_grid_import_cost,
+    calculate_hourly_bill_from_w_samples,
     compare_electricity_costs,
     effective_tracking_start,
 )
@@ -100,6 +101,21 @@ class BatteryOptimizerCoordinator(DataUpdateCoordinator[OptimizationResult | Non
         self.monthly_energy_with_battery_kwh = 0.0
         self.monthly_grid_import_energy_kwh = 0.0
         self.monthly_grid_import_cost = 0.0
+        self.billing_daily_electricity_cost = 0.0
+        self.billing_daily_fixed_fees = 0.0
+        self.billing_daily_total_cost = 0.0
+        self.billing_daily_energy_kwh = 0.0
+        self.billing_monthly_electricity_cost = 0.0
+        self.billing_monthly_fixed_fees = 0.0
+        self.billing_monthly_total_cost = 0.0
+        self.billing_monthly_energy_kwh = 0.0
+        self.billing_daily_date = dt_util.now().date()
+        self.billing_month_key = _month_key(dt_util.now().date())
+        self.billing_current_hour_start: datetime | None = None
+        self.billing_current_hour_samples_w: list[float] = []
+        self.billing_current_hour_price: float | None = None
+        self.billing_last_grid_sample_id: str | None = None
+        self.billing_tracking_status = "Waiting for the first grid-power sample."
         self.month_key = _month_key(dt_util.now().date())
         self.cost_tracking_reset_at: datetime | None = None
         self.cost_tracking_status = "Waiting for first runtime sample."
@@ -157,6 +173,13 @@ class BatteryOptimizerCoordinator(DataUpdateCoordinator[OptimizationResult | Non
             self.daily_energy_with_battery_kwh = float(stored.get("energy_with_battery_kwh", 0))
             self.daily_grid_import_energy_kwh = float(stored.get("grid_import_energy_kwh", 0))
             self.daily_grid_import_cost = float(stored.get("grid_import_cost", 0))
+        billing_stored_date = _parse_date(stored.get("billing_daily_date"))
+        if billing_stored_date is not None:
+            self.billing_daily_date = billing_stored_date
+            self.billing_daily_electricity_cost = float(stored.get("billing_daily_electricity_cost", 0))
+            self.billing_daily_fixed_fees = float(stored.get("billing_daily_fixed_fees", 0))
+            self.billing_daily_total_cost = float(stored.get("billing_daily_total_cost", 0))
+            self.billing_daily_energy_kwh = float(stored.get("billing_daily_energy_kwh", 0))
         if stored.get("month") == self.month_key:
             self.monthly_cost_without_battery = float(stored.get("monthly_cost_without_battery", 0))
             self.monthly_cost_with_battery = float(stored.get("monthly_cost_with_battery", 0))
@@ -165,6 +188,17 @@ class BatteryOptimizerCoordinator(DataUpdateCoordinator[OptimizationResult | Non
             self.monthly_energy_with_battery_kwh = float(stored.get("monthly_energy_with_battery_kwh", 0))
             self.monthly_grid_import_energy_kwh = float(stored.get("monthly_grid_import_energy_kwh", 0))
             self.monthly_grid_import_cost = float(stored.get("monthly_grid_import_cost", 0))
+        if stored.get("billing_month") == self.billing_month_key:
+            self.billing_monthly_electricity_cost = float(stored.get("billing_monthly_electricity_cost", 0))
+            self.billing_monthly_fixed_fees = float(stored.get("billing_monthly_fixed_fees", 0))
+            self.billing_monthly_total_cost = float(stored.get("billing_monthly_total_cost", 0))
+            self.billing_monthly_energy_kwh = float(stored.get("billing_monthly_energy_kwh", 0))
+        self.billing_current_hour_start = _parse_datetime(stored.get("billing_current_hour_start"))
+        samples = stored.get("billing_current_hour_samples_w")
+        if isinstance(samples, list):
+            self.billing_current_hour_samples_w = [_coerce_float_state(value) or 0.0 for value in samples]
+        self.billing_current_hour_price = _coerce_float_state(stored.get("billing_current_hour_price"))
+        self.billing_last_grid_sample_id = stored.get("billing_last_grid_sample_id")
         self.adaptive_state = AdaptiveState(
             load_bias_kw=float(stored.get("adaptive_load_bias_kw", 0.0)),
             charge_response_factor=float(stored.get("adaptive_charge_response_factor", 1.0)),
@@ -174,6 +208,7 @@ class BatteryOptimizerCoordinator(DataUpdateCoordinator[OptimizationResult | Non
         await self._async_backfill_cost_totals()
 
     async def _async_update_data(self) -> OptimizationResult | None:
+        await self._async_update_hourly_billing_costs()
         seed_input, seed_status = self.ingestor.build_input(self._previous_mode, self._previous_mode_intervals)
         load_override = None
         raw_load_forecast: list[ForecastPoint] = []
@@ -408,6 +443,20 @@ class BatteryOptimizerCoordinator(DataUpdateCoordinator[OptimizationResult | Non
         self.monthly_energy_with_battery_kwh = 0.0
         self.monthly_grid_import_energy_kwh = 0.0
         self.monthly_grid_import_cost = 0.0
+        self.billing_daily_date = now.date()
+        self.billing_month_key = _month_key(now.date())
+        self.billing_daily_electricity_cost = 0.0
+        self.billing_daily_fixed_fees = 0.0
+        self.billing_daily_total_cost = 0.0
+        self.billing_daily_energy_kwh = 0.0
+        self.billing_monthly_electricity_cost = 0.0
+        self.billing_monthly_fixed_fees = 0.0
+        self.billing_monthly_total_cost = 0.0
+        self.billing_monthly_energy_kwh = 0.0
+        self.billing_current_hour_start = now.replace(minute=0, second=0, microsecond=0)
+        self.billing_current_hour_samples_w = []
+        self.billing_current_hour_price = None
+        self.billing_last_grid_sample_id = None
         self.cost_tracking_reset_at = now
         self._last_daily_sample = now
         self.cost_tracking_status = (
@@ -415,6 +464,9 @@ class BatteryOptimizerCoordinator(DataUpdateCoordinator[OptimizationResult | Non
         )
         self.grid_cost_tracking_status = (
             f"Grid import cost tracking was reset to 0 at {now.strftime('%Y-%m-%d %H:%M:%S')} and will accumulate from the next sample."
+        )
+        self.billing_tracking_status = (
+            f"Hourly billing cost tracking was reset to 0 at {now.strftime('%Y-%m-%d %H:%M:%S')}."
         )
         await self._async_store_daily_totals()
         self.async_update_listeners()
@@ -553,6 +605,137 @@ class BatteryOptimizerCoordinator(DataUpdateCoordinator[OptimizationResult | Non
         )
         await self._async_store_daily_totals()
 
+    async def _async_update_hourly_billing_costs(self) -> None:
+        """Track a fresh hourly-billed actual grid cost from the grid power sensor."""
+
+        now = dt_util.now()
+        current_hour_start = now.replace(minute=0, second=0, microsecond=0)
+        changed = False
+
+        if self.billing_current_hour_start is None:
+            self.billing_current_hour_start = current_hour_start
+            self.billing_current_hour_price = _read_billing_hourly_price_for_hour(
+                self.hass,
+                self.config.get(CONF_PRICE_ENTITY),
+                current_hour_start,
+            )
+            changed = True
+
+        if self.billing_current_hour_start < current_hour_start:
+            changed = self._finalize_billing_hour() or changed
+            changed = self._rollover_billing_day_if_needed(now.date()) or changed
+            changed = self._rollover_billing_month_if_needed(now.date()) or changed
+            self.billing_current_hour_start = current_hour_start
+            self.billing_current_hour_samples_w = []
+            self.billing_current_hour_price = _read_billing_hourly_price_for_hour(
+                self.hass,
+                self.config.get(CONF_PRICE_ENTITY),
+                current_hour_start,
+            )
+            changed = True
+
+        changed = self._rollover_billing_day_if_needed(now.date()) or changed
+        changed = self._rollover_billing_month_if_needed(now.date()) or changed
+
+        if self._collect_current_billing_sample(current_hour_start):
+            changed = True
+
+        if changed:
+            await self._async_store_daily_totals()
+
+    def _collect_current_billing_sample(self, current_hour_start: datetime) -> bool:
+        grid_entity = self.config.get(CONF_GRID_POWER_ENTITY) or DEFAULT_GRID_POWER_ENTITY
+        state = self.hass.states.get(grid_entity)
+        if state is None or state.state in {"unknown", "unavailable", ""}:
+            self.billing_tracking_status = f"Waiting for grid power sensor {grid_entity}."
+            return False
+        sample_time = _state_timestamp(state)
+        if sample_time is None:
+            self.billing_tracking_status = f"Waiting for a timestamped grid power sample from {grid_entity}."
+            return False
+        sample_time = dt_util.as_local(sample_time)
+        if sample_time.replace(minute=0, second=0, microsecond=0) != current_hour_start:
+            self.billing_tracking_status = f"Waiting for the next {grid_entity} update in the current billing hour."
+            return False
+        sample_id = sample_time.isoformat()
+        if sample_id == self.billing_last_grid_sample_id:
+            return False
+        try:
+            raw_value = float(state.state)
+        except ValueError:
+            self.billing_tracking_status = f"Grid power sensor {grid_entity} has a non-numeric state."
+            return False
+
+        unit = _state_unit(state)
+        sample_w = max(power_value_to_kw(raw_value, unit) * 1000, 0.0)
+        self.billing_current_hour_samples_w.append(sample_w)
+        self.billing_last_grid_sample_id = sample_id
+        if self.billing_current_hour_price is None:
+            self.billing_current_hour_price = _read_billing_hourly_price_for_hour(
+                self.hass,
+                self.config.get(CONF_PRICE_ENTITY),
+                current_hour_start,
+            )
+        self.billing_tracking_status = (
+            f"Collected {len(self.billing_current_hour_samples_w)}/12 samples for "
+            f"{current_hour_start.strftime('%Y-%m-%d %H:00')}."
+        )
+        return True
+
+    def _finalize_billing_hour(self) -> bool:
+        hour_start = self.billing_current_hour_start
+        if hour_start is None:
+            return False
+        price = self.billing_current_hour_price
+        if price is None:
+            price = _read_billing_hourly_price_for_hour(self.hass, self.config.get(CONF_PRICE_ENTITY), hour_start)
+        if price is None:
+            self.billing_tracking_status = (
+                f"Skipped {hour_start.strftime('%Y-%m-%d %H:00')} because the hourly Nord Pool price was unavailable."
+            )
+            return False
+        if not self.billing_current_hour_samples_w:
+            self.billing_tracking_status = f"Skipped {hour_start.strftime('%Y-%m-%d %H:00')} because no grid samples were collected."
+            return False
+
+        fee = float(self.config.get(CONF_GRID_FEE_PER_KWH, DEFAULT_GRID_FEE_PER_KWH))
+        totals = calculate_hourly_bill_from_w_samples(self.billing_current_hour_samples_w, price, fee)
+        self.billing_daily_energy_kwh += totals.energy_kwh
+        self.billing_daily_electricity_cost += totals.electricity_cost
+        self.billing_daily_fixed_fees += totals.fixed_fee
+        self.billing_daily_total_cost += totals.total_cost
+        self.billing_tracking_status = (
+            f"Closed {hour_start.strftime('%Y-%m-%d %H:00')} with {totals.samples} samples, "
+            f"{totals.energy_kwh:.3f} kWh, {totals.total_cost:.2f} SEK."
+        )
+        return True
+
+    def _rollover_billing_day_if_needed(self, today: date) -> bool:
+        if self.billing_daily_date >= today:
+            return False
+        if _month_key(self.billing_daily_date) == self.billing_month_key:
+            self.billing_monthly_energy_kwh += self.billing_daily_energy_kwh
+            self.billing_monthly_electricity_cost += self.billing_daily_electricity_cost
+            self.billing_monthly_fixed_fees += self.billing_daily_fixed_fees
+            self.billing_monthly_total_cost += self.billing_daily_total_cost
+        self.billing_daily_date = today
+        self.billing_daily_energy_kwh = 0.0
+        self.billing_daily_electricity_cost = 0.0
+        self.billing_daily_fixed_fees = 0.0
+        self.billing_daily_total_cost = 0.0
+        return True
+
+    def _rollover_billing_month_if_needed(self, today: date) -> bool:
+        current_month = _month_key(today)
+        if current_month == self.billing_month_key:
+            return False
+        self.billing_month_key = current_month
+        self.billing_monthly_energy_kwh = 0.0
+        self.billing_monthly_electricity_cost = 0.0
+        self.billing_monthly_fixed_fees = 0.0
+        self.billing_monthly_total_cost = 0.0
+        return True
+
     def _accumulate_grid_import_cost_sample(
         self,
         elapsed_hours: float,
@@ -605,6 +788,22 @@ class BatteryOptimizerCoordinator(DataUpdateCoordinator[OptimizationResult | Non
                 "monthly_energy_with_battery_kwh": round(self.monthly_energy_with_battery_kwh, 4),
                 "monthly_grid_import_energy_kwh": round(self.monthly_grid_import_energy_kwh, 4),
                 "monthly_grid_import_cost": round(self.monthly_grid_import_cost, 4),
+                "billing_daily_date": self.billing_daily_date.isoformat(),
+                "billing_daily_electricity_cost": round(self.billing_daily_electricity_cost, 4),
+                "billing_daily_fixed_fees": round(self.billing_daily_fixed_fees, 4),
+                "billing_daily_total_cost": round(self.billing_daily_total_cost, 4),
+                "billing_daily_energy_kwh": round(self.billing_daily_energy_kwh, 4),
+                "billing_month": self.billing_month_key,
+                "billing_monthly_electricity_cost": round(self.billing_monthly_electricity_cost, 4),
+                "billing_monthly_fixed_fees": round(self.billing_monthly_fixed_fees, 4),
+                "billing_monthly_total_cost": round(self.billing_monthly_total_cost, 4),
+                "billing_monthly_energy_kwh": round(self.billing_monthly_energy_kwh, 4),
+                "billing_current_hour_start": (
+                    self.billing_current_hour_start.isoformat() if self.billing_current_hour_start else None
+                ),
+                "billing_current_hour_samples_w": [round(value, 3) for value in self.billing_current_hour_samples_w],
+                "billing_current_hour_price": self.billing_current_hour_price,
+                "billing_last_grid_sample_id": self.billing_last_grid_sample_id,
                 "cost_tracking_reset_at": self.cost_tracking_reset_at.isoformat() if self.cost_tracking_reset_at else None,
                 "adaptive_load_bias_kw": round(self.adaptive_state.load_bias_kw, 4),
                 "adaptive_charge_response_factor": round(self.adaptive_state.charge_response_factor, 4),
@@ -1302,6 +1501,28 @@ def _read_current_billing_hourly_price(
     return _coerce_float_state(state.state), "price sensor state fallback"
 
 
+def _read_billing_hourly_price_for_hour(
+    hass: HomeAssistant,
+    entity_id: str | None,
+    hour_start: datetime,
+) -> float | None:
+    """Read the supplier-style Nord Pool hourly average for a specific hour."""
+
+    if not entity_id:
+        return None
+    local_hour = dt_util.as_local(hour_start).replace(minute=0, second=0, microsecond=0)
+    today = dt_util.now().date()
+    day_key = "today" if local_hour.date() == today else "tomorrow" if local_hour.date() == today + timedelta(days=1) else None
+    if day_key is None:
+        return None
+    day = build_price_comparison(hass, entity_id).get(day_key, {})
+    for point in day.get("hourly_average", []):
+        point_time = dt_util.parse_datetime(point.get("time"))
+        if point_time and dt_util.as_local(point_time).replace(minute=0, second=0, microsecond=0) == local_hour:
+            return _coerce_float_state(point.get("price"))
+    return None
+
+
 def _series_value_at(series: list[tuple[datetime, float]], when: datetime) -> float | None:
     value = None
     for point_time, point_value in series:
@@ -1336,6 +1557,11 @@ def _state_unit(state) -> str | None:
     if unit is None:
         unit = getattr(state, "unit_of_measurement", None)
     return str(unit) if unit is not None else None
+
+
+def _state_timestamp(state) -> datetime | None:
+    timestamp = getattr(state, "last_updated", None) or getattr(state, "last_changed", None)
+    return timestamp if isinstance(timestamp, datetime) else None
 
 
 def _empty_cost_totals() -> dict[str, float]:

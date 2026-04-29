@@ -15,7 +15,15 @@ from homeassistant.helpers.update_coordinator import CoordinatorEntity
 from homeassistant.util import dt as dt_util
 
 from .adaptive import compute_command_targets
-from .const import ATTR_PLAN, ATTR_REASONS, ATTR_WINDOWS, CONF_GRID_POWER_ENTITY, DEFAULT_GRID_POWER_ENTITY, DOMAIN
+from .const import (
+    ATTR_PLAN,
+    ATTR_REASONS,
+    ATTR_WINDOWS,
+    CONF_GRID_POWER_ENTITY,
+    DEFAULT_GRID_FEE_PER_KWH,
+    DEFAULT_GRID_POWER_ENTITY,
+    DOMAIN,
+)
 from .coordinator import BatteryOptimizerCoordinator, get_coordinator
 from .ingestion import build_price_comparison
 from .optimizer import BatteryMode
@@ -142,6 +150,27 @@ SENSORS: tuple[BatteryOptimizerSensorDescription, ...] = (
         attrs_fn=lambda coordinator: _grid_cost_daily_attrs(coordinator),
     ),
     BatteryOptimizerSensorDescription(
+        key="electricity_cost_today",
+        translation_key="electricity_cost_today",
+        native_unit_of_measurement="SEK",
+        value_fn=lambda coordinator: round(coordinator.billing_daily_electricity_cost, 2),
+        attrs_fn=lambda coordinator: _billing_daily_attrs(coordinator),
+    ),
+    BatteryOptimizerSensorDescription(
+        key="fixed_fees_today",
+        translation_key="fixed_fees_today",
+        native_unit_of_measurement="SEK",
+        value_fn=lambda coordinator: round(coordinator.billing_daily_fixed_fees, 2),
+        attrs_fn=lambda coordinator: _billing_daily_attrs(coordinator),
+    ),
+    BatteryOptimizerSensorDescription(
+        key="total_cost_today",
+        translation_key="total_cost_today",
+        native_unit_of_measurement="SEK",
+        value_fn=lambda coordinator: round(coordinator.billing_daily_total_cost, 2),
+        attrs_fn=lambda coordinator: _billing_daily_attrs(coordinator),
+    ),
+    BatteryOptimizerSensorDescription(
         key="monthly_cost_without_battery",
         translation_key="monthly_cost_without_battery",
         native_unit_of_measurement="SEK",
@@ -189,6 +218,30 @@ SENSORS: tuple[BatteryOptimizerSensorDescription, ...] = (
         native_unit_of_measurement="kWh",
         value_fn=lambda coordinator: round(coordinator.monthly_grid_import_energy_kwh, 3),
         attrs_fn=lambda coordinator: _grid_cost_monthly_attrs(coordinator),
+    ),
+    BatteryOptimizerSensorDescription(
+        key="monthly_electricity_cost",
+        translation_key="monthly_electricity_cost",
+        native_unit_of_measurement="SEK",
+        value_fn=lambda coordinator: round(
+            coordinator.billing_monthly_electricity_cost + coordinator.billing_daily_electricity_cost,
+            2,
+        ),
+        attrs_fn=lambda coordinator: _billing_monthly_attrs(coordinator),
+    ),
+    BatteryOptimizerSensorDescription(
+        key="monthly_fixed_fees",
+        translation_key="monthly_fixed_fees",
+        native_unit_of_measurement="SEK",
+        value_fn=lambda coordinator: round(coordinator.billing_monthly_fixed_fees + coordinator.billing_daily_fixed_fees, 2),
+        attrs_fn=lambda coordinator: _billing_monthly_attrs(coordinator),
+    ),
+    BatteryOptimizerSensorDescription(
+        key="monthly_total_cost",
+        translation_key="monthly_total_cost",
+        native_unit_of_measurement="SEK",
+        value_fn=lambda coordinator: round(coordinator.billing_monthly_total_cost + coordinator.billing_daily_total_cost, 2),
+        attrs_fn=lambda coordinator: _billing_monthly_attrs(coordinator),
     ),
     BatteryOptimizerSensorDescription(
         key="price_today_comparison",
@@ -519,6 +572,50 @@ def _grid_cost_monthly_attrs(coordinator: BatteryOptimizerCoordinator) -> dict[s
         "reset_at": coordinator.cost_tracking_reset_at.isoformat() if coordinator.cost_tracking_reset_at else None,
         "currency": "SEK",
         "method": "Month-to-date actual grid-import cost. Positive grid power is accumulated as kWh and multiplied by the Nord Pool supplier-style hourly average spot price. Configured grid fees are not added to this simple cost check.",
+    }
+
+
+def _billing_daily_attrs(coordinator: BatteryOptimizerCoordinator) -> dict[str, Any]:
+    grid_entity = coordinator.config.get(CONF_GRID_POWER_ENTITY) or DEFAULT_GRID_POWER_ENTITY
+    return {
+        "date": coordinator.billing_daily_date.isoformat(),
+        "electricity_cost_today": round(coordinator.billing_daily_electricity_cost, 4),
+        "fixed_fees_today": round(coordinator.billing_daily_fixed_fees, 4),
+        "total_cost_today": round(coordinator.billing_daily_total_cost, 4),
+        "energy_today_kwh": round(coordinator.billing_daily_energy_kwh, 4),
+        "current_hour_start": coordinator.billing_current_hour_start.isoformat()
+        if coordinator.billing_current_hour_start
+        else None,
+        "current_hour_samples": len(coordinator.billing_current_hour_samples_w),
+        "current_hour_price": coordinator.billing_current_hour_price,
+        "grid_power_entity": grid_entity,
+        "fixed_fee_per_kwh": coordinator.config.get("grid_fee_per_kwh", DEFAULT_GRID_FEE_PER_KWH),
+        "tracking_status": coordinator.billing_tracking_status,
+        "method": "Fresh hourly billing tracker. Every completed hour sums the 5-minute grid-power readings in watts, converts them to kWh, multiplies by the Nord Pool hourly average, and separately adds the fixed SEK/kWh fee.",
+    }
+
+
+def _billing_monthly_attrs(coordinator: BatteryOptimizerCoordinator) -> dict[str, Any]:
+    grid_entity = coordinator.config.get(CONF_GRID_POWER_ENTITY) or DEFAULT_GRID_POWER_ENTITY
+    return {
+        "month": coordinator.billing_month_key,
+        "monthly_electricity_cost": round(
+            coordinator.billing_monthly_electricity_cost + coordinator.billing_daily_electricity_cost,
+            4,
+        ),
+        "monthly_fixed_fees": round(coordinator.billing_monthly_fixed_fees + coordinator.billing_daily_fixed_fees, 4),
+        "monthly_total_cost": round(coordinator.billing_monthly_total_cost + coordinator.billing_daily_total_cost, 4),
+        "monthly_energy_kwh": round(coordinator.billing_monthly_energy_kwh + coordinator.billing_daily_energy_kwh, 4),
+        "closed_days_electricity_cost": round(coordinator.billing_monthly_electricity_cost, 4),
+        "closed_days_fixed_fees": round(coordinator.billing_monthly_fixed_fees, 4),
+        "closed_days_total_cost": round(coordinator.billing_monthly_total_cost, 4),
+        "today_electricity_cost": round(coordinator.billing_daily_electricity_cost, 4),
+        "today_fixed_fees": round(coordinator.billing_daily_fixed_fees, 4),
+        "today_total_cost": round(coordinator.billing_daily_total_cost, 4),
+        "grid_power_entity": grid_entity,
+        "fixed_fee_per_kwh": coordinator.config.get("grid_fee_per_kwh", DEFAULT_GRID_FEE_PER_KWH),
+        "tracking_status": coordinator.billing_tracking_status,
+        "method": "Month-to-date fresh billing tracker. Finished days are transferred into the month at midnight, and the sensor value also includes today's running hourly totals.",
     }
 
 

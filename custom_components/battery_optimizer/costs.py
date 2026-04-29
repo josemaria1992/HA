@@ -27,6 +27,17 @@ class GridImportCostTotals:
     samples: int
 
 
+@dataclass(frozen=True)
+class HourlyBillTotals:
+    """Electricity, fee, and total cost for one supplier billing hour."""
+
+    energy_kwh: float
+    electricity_cost: float
+    fixed_fee: float
+    total_cost: float
+    samples: int
+
+
 def compare_electricity_costs(
     baseline_kwh: float,
     actual_grid_kwh: float,
@@ -138,6 +149,30 @@ def calculate_grid_import_cost(
         cursor = next_cursor
 
     return GridImportCostTotals(round(energy_kwh, 6), round(cost, 6), samples)
+
+
+def calculate_hourly_bill_from_w_samples(
+    samples_w: list[float],
+    price_per_kwh: float,
+    fixed_fee_per_kwh: float,
+    *,
+    sample_minutes: int = 5,
+) -> HourlyBillTotals:
+    """Calculate one hourly bill from periodic grid-power readings in watts."""
+
+    if sample_minutes <= 0 or not samples_w:
+        return HourlyBillTotals(0.0, 0.0, 0.0, 0.0, 0)
+
+    energy_kwh = sum(max(value, 0.0) for value in samples_w) * (sample_minutes / 60) / 1000
+    electricity_cost = energy_kwh * max(price_per_kwh, 0.0)
+    fixed_fee = energy_kwh * max(fixed_fee_per_kwh, 0.0)
+    return HourlyBillTotals(
+        energy_kwh=round(energy_kwh, 6),
+        electricity_cost=round(electricity_cost, 6),
+        fixed_fee=round(fixed_fee, 6),
+        total_cost=round(electricity_cost + fixed_fee, 6),
+        samples=len(samples_w),
+    )
 
 
 def effective_tracking_start(

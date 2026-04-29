@@ -116,6 +116,9 @@ Created entities include:
 - `sensor.battery_optimizer_daily_energy_with_battery`
 - `sensor.battery_optimizer_daily_grid_import_cost`
 - `sensor.battery_optimizer_daily_grid_import_energy`
+- `sensor.battery_optimizer_electricity_cost_today`
+- `sensor.battery_optimizer_fixed_fees_today`
+- `sensor.battery_optimizer_total_cost_today`
 - `sensor.battery_optimizer_monthly_cost_without_battery`
 - `sensor.battery_optimizer_monthly_cost_with_battery`
 - `sensor.battery_optimizer_monthly_savings`
@@ -123,6 +126,9 @@ Created entities include:
 - `sensor.battery_optimizer_monthly_energy_with_battery`
 - `sensor.battery_optimizer_monthly_grid_import_cost`
 - `sensor.battery_optimizer_monthly_grid_import_energy`
+- `sensor.battery_optimizer_monthly_electricity_cost`
+- `sensor.battery_optimizer_monthly_fixed_fees`
+- `sensor.battery_optimizer_monthly_total_cost`
 - `sensor.battery_optimizer_price_today_comparison`
 - `sensor.battery_optimizer_price_tomorrow_comparison`
 - `sensor.battery_optimizer_load_forecast`
@@ -453,6 +459,22 @@ cards:
         name: Today's grid import
 
   - type: entities
+    title: Electricity Cost Today
+    entities:
+      - entity: sensor.battery_optimizer_electricity_cost_today
+        name: Electricity cost today
+      - entity: sensor.battery_optimizer_fixed_fees_today
+        name: Fixed fees
+      - entity: sensor.battery_optimizer_total_cost_today
+        name: Total
+      - entity: sensor.battery_optimizer_monthly_electricity_cost
+        name: Monthly electricity cost
+      - entity: sensor.battery_optimizer_monthly_fixed_fees
+        name: Monthly fixed fees
+      - entity: sensor.battery_optimizer_monthly_total_cost
+        name: Monthly total cost
+
+  - type: entities
     title: Month-To-Date Invoice Estimate
     entities:
       - entity: sensor.battery_optimizer_monthly_cost_without_battery
@@ -629,6 +651,13 @@ Battery Optimizer now keeps two concepts separate:
    - positive `sensor.inverter_grid_power` is integrated into kWh
    - each sample uses the supplier-style hourly average from the four Nord Pool quarter-hour prices
    - configured grid fees are not added to these simple cost sensors
+
+4. `Electricity cost today`, `Fixed fees today`, `Total cost today`, and their monthly equivalents are the new fresh billing tracker:
+   - the tracker collects the `sensor.inverter_grid_power` updates for each billing hour
+   - twelve 5-minute readings of 1000 W count as 1 kWh
+   - electricity cost uses the average of the four Nord Pool quarter-hour prices for that hour
+   - fixed fees use the configured `grid_fee_per_kwh`, default `0.773 SEK/kWh`
+   - at midnight, the finished daily values are transferred into the monthly accumulator before the daily values reset to zero
 
 So the dashboard savings numbers answer the bill question directly, while the planning logic can still stay conservative about battery wear.
 

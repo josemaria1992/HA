@@ -28,6 +28,7 @@ battery_optimizer_pkg.__path__ = [str(BASE)]
 costs = _load_module("custom_components.battery_optimizer.costs", BASE / "costs.py")
 build_hourly_average_lookup = costs.build_hourly_average_lookup
 calculate_grid_import_cost = costs.calculate_grid_import_cost
+calculate_hourly_bill_from_w_samples = costs.calculate_hourly_bill_from_w_samples
 compare_electricity_costs = costs.compare_electricity_costs
 effective_tracking_start = costs.effective_tracking_start
 
@@ -104,6 +105,25 @@ def test_calculate_grid_import_cost_ignores_export_and_missing_prices() -> None:
     assert totals.energy_kwh == 1.0
     assert totals.cost == 2.0
     assert totals.samples == 12
+
+
+def test_calculate_hourly_bill_from_w_samples_uses_five_minute_energy() -> None:
+    totals = calculate_hourly_bill_from_w_samples([1000.0] * 12, 2.0, 0.773)
+
+    assert totals.energy_kwh == 1.0
+    assert totals.electricity_cost == 2.0
+    assert totals.fixed_fee == 0.773
+    assert totals.total_cost == 2.773
+    assert totals.samples == 12
+
+
+def test_calculate_hourly_bill_from_w_samples_ignores_negative_grid_power() -> None:
+    totals = calculate_hourly_bill_from_w_samples([1200.0, -500.0, 600.0], 1.5, 0.5)
+
+    assert totals.energy_kwh == 0.15
+    assert totals.electricity_cost == 0.225
+    assert totals.fixed_fee == 0.075
+    assert totals.total_cost == 0.3
 
 
 def test_effective_tracking_start_respects_manual_reset() -> None:
