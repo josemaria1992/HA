@@ -48,14 +48,14 @@ SENSORS: tuple[BatteryOptimizerSensorDescription, ...] = (
             "command_target_power_kw": coordinator.last_command_target_power_kw,
             "planned_command_target_soc_percent": _display_soc(coordinator.planned_command_target_soc),
             "planned_command_target_power_kw": coordinator.planned_command_target_power_kw,
-            "next_interval_projected_soc_percent": _display_soc(coordinator.data.projected_soc_percent) if coordinator.data else None,
+            "next_interval_projected_soc_percent": _display_soc(_current_projected_soc_point(coordinator).get("projected_soc_percent")),
         },
     ),
     BatteryOptimizerSensorDescription(
         key="projected_soc_schedule",
         translation_key="projected_soc_schedule",
         native_unit_of_measurement="%",
-        value_fn=lambda coordinator: _display_soc(coordinator.data.projected_soc_percent) if coordinator.data else None,
+        value_fn=lambda coordinator: _display_soc(_current_projected_soc_point(coordinator).get("projected_soc_percent")),
         attrs_fn=lambda coordinator: _projected_soc_schedule_attrs(coordinator),
     ),
     BatteryOptimizerSensorDescription(
@@ -334,7 +334,7 @@ def _plan_attrs(coordinator: BatteryOptimizerCoordinator) -> dict[str, Any]:
                 "net_value": interval.net_value,
                 "reason": interval.reason,
             }
-            for interval in coordinator.data.intervals[:48]
+            for interval in _display_intervals(coordinator)[:48]
         ],
     }
 
@@ -342,7 +342,7 @@ def _plan_attrs(coordinator: BatteryOptimizerCoordinator) -> dict[str, Any]:
 def _projected_soc_schedule_attrs(coordinator: BatteryOptimizerCoordinator) -> dict[str, Any]:
     if not coordinator.data:
         return {}
-    intervals = coordinator.data.intervals[:48]
+    intervals = _display_intervals(coordinator)[:48]
     soc_schedule = [
         {
             "time": interval.start.isoformat(),
@@ -370,7 +370,7 @@ def _projected_soc_schedule_attrs(coordinator: BatteryOptimizerCoordinator) -> d
 def _mode_summary(coordinator: BatteryOptimizerCoordinator, mode: BatteryMode) -> str | None:
     if not coordinator.data:
         return None
-    intervals = [interval for interval in coordinator.data.intervals if interval.mode is mode]
+    intervals = [interval for interval in _display_intervals(coordinator) if interval.mode is mode]
     if not intervals:
         return "None planned"
     first = intervals[0]
@@ -380,7 +380,7 @@ def _mode_summary(coordinator: BatteryOptimizerCoordinator, mode: BatteryMode) -
 def _mode_schedule_attrs(coordinator: BatteryOptimizerCoordinator, mode: BatteryMode) -> dict[str, Any]:
     if not coordinator.data:
         return {}
-    intervals = [interval for interval in coordinator.data.intervals if interval.mode is mode]
+    intervals = [interval for interval in _display_intervals(coordinator) if interval.mode is mode]
     return {
         "count": len(intervals),
         "hours": [
@@ -625,7 +625,7 @@ def _projected_soc_points_for_day(coordinator: BatteryOptimizerCoordinator, day_
             continue
         projected_soc = interval.projected_soc_percent
         input_constraints = getattr(coordinator, "_last_input_constraints", None)
-        if interval.mode is BatteryMode.CHARGE and input_constraints is not None:
+        if interval.mode is not BatteryMode.HOLD and input_constraints is not None:
             actual_soc = _current_actual_soc_percent(coordinator)
             running_soc = actual_soc if actual_soc is not None else interval.projected_soc_percent
             command_targets = compute_command_targets(
@@ -708,7 +708,7 @@ def _current_projected_soc_point(coordinator: BatteryOptimizerCoordinator) -> di
 
     if active_window_locked and coordinator._applied_snapshot is not None and coordinator._applied_plan is not None:
         active_projected_soc = coordinator._applied_plan.projected_soc_percent
-        if coordinator._applied_snapshot.mode is BatteryMode.CHARGE and coordinator.last_command_target_soc is not None:
+        if coordinator._applied_snapshot.mode in {BatteryMode.CHARGE, BatteryMode.DISCHARGE} and coordinator.last_command_target_soc is not None:
             active_projected_soc = coordinator.last_command_target_soc
         active_target_power_kw = coordinator.last_command_target_power_kw
         if active_target_power_kw is None:
@@ -726,7 +726,7 @@ def _current_projected_soc_point(coordinator: BatteryOptimizerCoordinator) -> di
     if intervals:
         planned_interval = intervals[0]
         projected_soc = planned_interval.projected_soc_percent
-        if planned_interval.mode is BatteryMode.CHARGE and coordinator.planned_command_target_soc is not None:
+        if planned_interval.mode in {BatteryMode.CHARGE, BatteryMode.DISCHARGE} and coordinator.planned_command_target_soc is not None:
             projected_soc = coordinator.planned_command_target_soc
         return {
             "time": now.isoformat(),
@@ -739,7 +739,7 @@ def _current_projected_soc_point(coordinator: BatteryOptimizerCoordinator) -> di
 
     if coordinator._applied_plan is not None and coordinator._applied_snapshot is not None:
         projected_soc = coordinator._applied_plan.projected_soc_percent
-        if coordinator._applied_snapshot.mode is BatteryMode.CHARGE and coordinator.last_command_target_soc is not None:
+        if coordinator._applied_snapshot.mode in {BatteryMode.CHARGE, BatteryMode.DISCHARGE} and coordinator.last_command_target_soc is not None:
             projected_soc = coordinator.last_command_target_soc
         return {
             "time": now.isoformat(),

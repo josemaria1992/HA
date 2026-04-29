@@ -320,3 +320,18 @@ def test_display_intervals_keep_charge_valley_soc_flat() -> None:
     )
 
     assert [interval.projected_soc_percent for interval in display] == [90.0, 90.0, 90.0]
+
+
+def test_display_intervals_show_discharge_at_reserve_floor() -> None:
+    interval = _plan(BatteryMode.DISCHARGE, price=3.0)
+    interval.projected_soc_percent = 65.0
+
+    display = effective_display_intervals(
+        [interval],
+        constraints=_constraints(),
+        current_soc_percent=80.0,
+        live_load_kw=4.0,
+    )
+
+    assert display[0].mode is BatteryMode.DISCHARGE
+    assert display[0].projected_soc_percent == 10

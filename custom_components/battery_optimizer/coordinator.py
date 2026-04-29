@@ -1311,6 +1311,12 @@ def _effective_display_intervals(
                 projected_soc_percent=running_soc,
                 reason=f"{effective.reason} Displayed as hold to avoid charge-valley cycling.",
             )
+        elif effective.mode is BatteryMode.DISCHARGE:
+            effective = replace(
+                effective,
+                projected_soc_percent=constraints.reserve_soc_percent,
+                reason=f"{effective.reason} Displayed at reserve SOC because discharge depth is controlled by current.",
+            )
 
         display.append(effective)
         running_soc = effective.projected_soc_percent
@@ -1508,7 +1514,7 @@ def _build_projected_soc_updates(
         if coordinator._is_control_window_locked() and coordinator._applied_plan is not None
         else current_interval.projected_soc_percent
     )
-    if current_mode == BatteryMode.CHARGE.value:
+    if current_mode in {BatteryMode.CHARGE.value, BatteryMode.DISCHARGE.value}:
         if coordinator.last_command_target_soc is not None:
             current_soc = coordinator.last_command_target_soc
         elif coordinator.planned_command_target_soc is not None:
@@ -1526,7 +1532,7 @@ def _build_projected_soc_updates(
     running_soc = current_interval.projected_soc_percent
     for index, interval in enumerate(intervals[1:], start=1):
         projected_soc = interval.projected_soc_percent
-        if interval.mode is BatteryMode.CHARGE and coordinator._last_input_constraints is not None:
+        if interval.mode is not BatteryMode.HOLD and coordinator._last_input_constraints is not None:
             command_targets = compute_command_targets(
                 intervals[index:],
                 coordinator._last_input_constraints,
