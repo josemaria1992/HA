@@ -7,7 +7,17 @@ from dataclasses import dataclass
 from datetime import timedelta
 from typing import Any
 
-from homeassistant.components.sensor import SensorEntity, SensorEntityDescription
+try:
+    from homeassistant.components.sensor import SensorDeviceClass, SensorEntity, SensorEntityDescription, SensorStateClass
+except ImportError:  # pragma: no cover - used by lightweight unit-test stubs
+    from homeassistant.components.sensor import SensorEntity, SensorEntityDescription
+
+    class SensorDeviceClass:
+        ENERGY = "energy"
+
+    class SensorStateClass:
+        MEASUREMENT = "measurement"
+        TOTAL_INCREASING = "total_increasing"
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
@@ -36,6 +46,8 @@ class BatteryOptimizerSensorDescription(SensorEntityDescription):
 
     value_fn: Callable[[BatteryOptimizerCoordinator], Any]
     attrs_fn: Callable[[BatteryOptimizerCoordinator], dict[str, Any]] = lambda coordinator: {}
+    device_class: str | None = None
+    state_class: str | None = None
 
 
 SENSORS: tuple[BatteryOptimizerSensorDescription, ...] = (
@@ -169,6 +181,24 @@ SENSORS: tuple[BatteryOptimizerSensorDescription, ...] = (
         native_unit_of_measurement="SEK",
         value_fn=lambda coordinator: round(coordinator.billing_daily_total_cost, 2),
         attrs_fn=lambda coordinator: _billing_daily_attrs(coordinator),
+    ),
+    BatteryOptimizerSensorDescription(
+        key="inverter_grid_energy_total",
+        translation_key="inverter_grid_energy_total",
+        native_unit_of_measurement="kWh",
+        device_class=SensorDeviceClass.ENERGY,
+        state_class=SensorStateClass.TOTAL_INCREASING,
+        value_fn=lambda coordinator: round(coordinator.billing_cumulative_energy_kwh, 3),
+        attrs_fn=lambda coordinator: _billing_energy_attrs(coordinator),
+    ),
+    BatteryOptimizerSensorDescription(
+        key="inverter_grid_energy_hourly",
+        translation_key="inverter_grid_energy_hourly",
+        native_unit_of_measurement="kWh",
+        device_class=SensorDeviceClass.ENERGY,
+        state_class=SensorStateClass.MEASUREMENT,
+        value_fn=lambda coordinator: round(coordinator.billing_hourly_energy_kwh, 3),
+        attrs_fn=lambda coordinator: _billing_energy_attrs(coordinator),
     ),
     BatteryOptimizerSensorDescription(
         key="monthly_cost_without_battery",
@@ -349,6 +379,8 @@ class BatteryOptimizerSensor(CoordinatorEntity[BatteryOptimizerCoordinator], Sen
         super().__init__(coordinator)
         self.entity_description = description
         self._attr_unique_id = f"{entry.entry_id}_{description.key}"
+        self._attr_device_class = description.device_class
+        self._attr_state_class = description.state_class
         self._attr_device_info = {
             "identifiers": {(DOMAIN, entry.entry_id)},
             "name": entry.title,
@@ -586,12 +618,36 @@ def _billing_daily_attrs(coordinator: BatteryOptimizerCoordinator) -> dict[str, 
         "current_hour_start": coordinator.billing_current_hour_start.isoformat()
         if coordinator.billing_current_hour_start
         else None,
-        "current_hour_samples": len(coordinator.billing_current_hour_samples_w),
+        "current_hour_energy_kwh": round(coordinator.billing_hourly_energy_kwh, 4),
+        "cumulative_energy_kwh": round(coordinator.billing_cumulative_energy_kwh, 4),
+        "previous_power_w": coordinator.billing_previous_power_w,
+        "previous_sample_time": coordinator.billing_previous_sample_time.isoformat()
+        if coordinator.billing_previous_sample_time
+        else None,
         "current_hour_price": coordinator.billing_current_hour_price,
         "grid_power_entity": grid_entity,
         "fixed_fee_per_kwh": coordinator.config.get("grid_fee_per_kwh", DEFAULT_GRID_FEE_PER_KWH),
         "tracking_status": coordinator.billing_tracking_status,
-        "method": "Fresh hourly billing tracker. Every completed hour sums the 5-minute grid-power readings in watts, converts them to kWh, multiplies by the Nord Pool hourly average, and separately adds the fixed SEK/kWh fee.",
+        "method": "Fresh hourly billing tracker. Grid power in watts is integrated with the trapezoidal rule. Each completed hour is multiplied by the Nord Pool hourly average and separately by the fixed SEK/kWh fee.",
+    }
+
+
+def _billing_energy_attrs(coordinator: BatteryOptimizerCoordinator) -> dict[str, Any]:
+    grid_entity = coordinator.config.get(CONF_GRID_POWER_ENTITY) or DEFAULT_GRID_POWER_ENTITY
+    return {
+        "source": grid_entity,
+        "current_hour_start": coordinator.billing_current_hour_start.isoformat()
+        if coordinator.billing_current_hour_start
+        else None,
+        "cumulative_energy_kwh": round(coordinator.billing_cumulative_energy_kwh, 6),
+        "hourly_energy_kwh": round(coordinator.billing_hourly_energy_kwh, 6),
+        "hour_start_energy_kwh": round(coordinator.billing_hour_start_energy_kwh, 6),
+        "previous_power_w": coordinator.billing_previous_power_w,
+        "previous_sample_time": coordinator.billing_previous_sample_time.isoformat()
+        if coordinator.billing_previous_sample_time
+        else None,
+        "tracking_status": coordinator.billing_tracking_status,
+        "method": "Trapezoidal integration of real active power in W. The cumulative sensor is total_increasing; the hourly sensor resets at each clock-hour boundary.",
     }
 
 
@@ -615,7 +671,7 @@ def _billing_monthly_attrs(coordinator: BatteryOptimizerCoordinator) -> dict[str
         "grid_power_entity": grid_entity,
         "fixed_fee_per_kwh": coordinator.config.get("grid_fee_per_kwh", DEFAULT_GRID_FEE_PER_KWH),
         "tracking_status": coordinator.billing_tracking_status,
-        "method": "Month-to-date fresh billing tracker. Finished days are transferred into the month at midnight, and the sensor value also includes today's running hourly totals.",
+        "method": "Month-to-date fresh billing tracker. Grid power in watts is integrated with the trapezoidal rule. Finished days are transferred into the month at midnight, and the sensor value also includes today's running hourly totals.",
     }
 
 

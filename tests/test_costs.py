@@ -28,9 +28,9 @@ battery_optimizer_pkg.__path__ = [str(BASE)]
 costs = _load_module("custom_components.battery_optimizer.costs", BASE / "costs.py")
 build_hourly_average_lookup = costs.build_hourly_average_lookup
 calculate_grid_import_cost = costs.calculate_grid_import_cost
-calculate_hourly_bill_from_w_samples = costs.calculate_hourly_bill_from_w_samples
 compare_electricity_costs = costs.compare_electricity_costs
 effective_tracking_start = costs.effective_tracking_start
+trapezoidal_energy_kwh = costs.trapezoidal_energy_kwh
 
 
 def test_compare_electricity_costs_returns_bill_savings_only() -> None:
@@ -107,23 +107,34 @@ def test_calculate_grid_import_cost_ignores_export_and_missing_prices() -> None:
     assert totals.samples == 12
 
 
-def test_calculate_hourly_bill_from_w_samples_uses_five_minute_energy() -> None:
-    totals = calculate_hourly_bill_from_w_samples([1000.0] * 12, 2.0, 0.773)
+def test_trapezoidal_energy_kwh_integrates_power_over_time() -> None:
+    start = datetime(2026, 4, 21, 14, 0)
 
-    assert totals.energy_kwh == 1.0
-    assert totals.electricity_cost == 2.0
-    assert totals.fixed_fee == 0.773
-    assert totals.total_cost == 2.773
-    assert totals.samples == 12
+    assert trapezoidal_energy_kwh(1000.0, 2000.0, start, start + timedelta(minutes=15)) == 0.375
 
 
-def test_calculate_hourly_bill_from_w_samples_ignores_negative_grid_power() -> None:
-    totals = calculate_hourly_bill_from_w_samples([1200.0, -500.0, 600.0], 1.5, 0.5)
+def test_trapezoidal_energy_kwh_matches_variable_hour_example() -> None:
+    start = datetime(2026, 4, 21, 14, 0)
+    points = [
+        (start, 1000.0),
+        (start + timedelta(minutes=15), 2000.0),
+        (start + timedelta(minutes=30), 3000.0),
+        (start + timedelta(minutes=45), 2000.0),
+        (start + timedelta(hours=1), 1000.0),
+    ]
 
-    assert totals.energy_kwh == 0.15
-    assert totals.electricity_cost == 0.225
-    assert totals.fixed_fee == 0.075
-    assert totals.total_cost == 0.3
+    total = sum(
+        trapezoidal_energy_kwh(previous_power, current_power, previous_time, current_time)
+        for (previous_time, previous_power), (current_time, current_power) in zip(points, points[1:])
+    )
+
+    assert total == 2.0
+
+
+def test_trapezoidal_energy_kwh_ignores_negative_import_power() -> None:
+    start = datetime(2026, 4, 21, 14, 0)
+
+    assert trapezoidal_energy_kwh(-1000.0, 1000.0, start, start + timedelta(hours=1)) == 0.5
 
 
 def test_effective_tracking_start_respects_manual_reset() -> None:

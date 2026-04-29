@@ -119,6 +119,8 @@ Created entities include:
 - `sensor.battery_optimizer_electricity_cost_today`
 - `sensor.battery_optimizer_fixed_fees_today`
 - `sensor.battery_optimizer_total_cost_today`
+- `sensor.battery_optimizer_inverter_grid_energy_total`
+- `sensor.battery_optimizer_inverter_grid_energy_hourly`
 - `sensor.battery_optimizer_monthly_cost_without_battery`
 - `sensor.battery_optimizer_monthly_cost_with_battery`
 - `sensor.battery_optimizer_monthly_savings`
@@ -467,6 +469,10 @@ cards:
         name: Fixed fees
       - entity: sensor.battery_optimizer_total_cost_today
         name: Total
+      - entity: sensor.battery_optimizer_inverter_grid_energy_hourly
+        name: Current hour kWh
+      - entity: sensor.battery_optimizer_inverter_grid_energy_total
+        name: Cumulative kWh
       - entity: sensor.battery_optimizer_monthly_electricity_cost
         name: Monthly electricity cost
       - entity: sensor.battery_optimizer_monthly_fixed_fees
@@ -654,7 +660,7 @@ Battery Optimizer now keeps two concepts separate:
 
 4. `Electricity cost today`, `Fixed fees today`, `Total cost today`, and their monthly equivalents are the new fresh billing tracker:
    - the tracker collects the `sensor.inverter_grid_power` updates for each billing hour
-   - twelve 5-minute readings of 1000 W count as 1 kWh
+   - energy is calculated with trapezoidal integration of instantaneous power readings in W
    - electricity cost uses the average of the four Nord Pool quarter-hour prices for that hour
    - fixed fees use the configured `grid_fee_per_kwh`, default `0.773 SEK/kWh`
    - at midnight, the finished daily values are transferred into the monthly accumulator before the daily values reset to zero

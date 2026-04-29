@@ -88,6 +88,8 @@
       "electricity_cost_today": { "name": "Electricity cost today" },
       "fixed_fees_today": { "name": "Fixed fees today" },
       "total_cost_today": { "name": "Total cost today" },
+      "inverter_grid_energy_total": { "name": "Inverter grid energy total" },
+      "inverter_grid_energy_hourly": { "name": "Inverter grid energy hourly" },
       "monthly_cost_without_battery": { "name": "Monthly cost without battery" },
       "monthly_cost_with_battery": { "name": "Monthly cost with battery" },
       "monthly_savings": { "name": "Monthly savings" },
