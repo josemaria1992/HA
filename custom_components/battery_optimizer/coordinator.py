@@ -210,6 +210,7 @@ class BatteryOptimizerCoordinator(DataUpdateCoordinator[OptimizationResult | Non
             charge_response_factor=float(stored.get("adaptive_charge_response_factor", 1.0)),
             discharge_response_factor=float(stored.get("adaptive_discharge_response_factor", 1.0)),
         )
+        self.load_forecast_history = _deserialize_forecast_points(stored.get("load_forecast_history"))
         self.cost_tracking_reset_at = _parse_datetime(stored.get("cost_tracking_reset_at"))
         await self._async_backfill_cost_totals()
 
@@ -218,14 +219,18 @@ class BatteryOptimizerCoordinator(DataUpdateCoordinator[OptimizationResult | Non
         seed_input, seed_status = self.ingestor.build_input(self._previous_mode, self._previous_mode_intervals)
         load_override = None
         raw_load_forecast: list[ForecastPoint] = []
+        display_raw_load_forecast: list[ForecastPoint] = []
         if seed_input is not None:
-            starts = [point.start for point in seed_input.prices]
-            raw_load_forecast = await async_build_history_load_forecast(
+            optimizer_starts = [point.start for point in seed_input.prices]
+            display_starts = _forecast_display_starts(dt_util.now(), seed_input.constraints.interval_minutes)
+            display_raw_load_forecast = await async_build_history_load_forecast(
                 self.hass,
                 self.config,
-                starts,
+                _merge_forecast_starts(optimizer_starts, display_starts),
                 seed_input.constraints.interval_minutes,
             )
+            by_start = {point.start: point for point in display_raw_load_forecast}
+            raw_load_forecast = [by_start[point.start] for point in seed_input.prices if point.start in by_start]
             if raw_load_forecast:
                 load_override = to_load_points(raw_load_forecast)
 
@@ -258,11 +263,16 @@ class BatteryOptimizerCoordinator(DataUpdateCoordinator[OptimizationResult | Non
         self._update_adaptive_state_if_interval_advanced(input_data.prices[0].start if input_data.prices else None)
         load_forecast_reliable, reliability_reason = self._assess_load_forecast_reliability(raw_load_forecast)
         if raw_load_forecast and load_forecast_reliable:
-            published_forecast = apply_bias_to_forecast_points(raw_load_forecast, self.adaptive_state.load_bias_kw)
+            published_forecast = apply_bias_to_forecast_points(display_raw_load_forecast, self.adaptive_state.load_bias_kw)
             optimizer_load_forecast = apply_load_bias(to_load_points(raw_load_forecast), self.adaptive_state.load_bias_kw)
         else:
             fallback_forecast = self._build_fallback_load_forecast(input_data)
-            published_forecast = apply_bias_to_forecast_points(fallback_forecast, self.adaptive_state.load_bias_kw)
+            display_fallback_forecast = self._build_display_fallback_load_forecast(
+                display_raw_load_forecast,
+                fallback_forecast,
+                input_data,
+            )
+            published_forecast = apply_bias_to_forecast_points(display_fallback_forecast, self.adaptive_state.load_bias_kw)
             optimizer_load_forecast = apply_load_bias(to_load_points(fallback_forecast), self.adaptive_state.load_bias_kw)
         input_data = replace(
             input_data,
@@ -897,6 +907,7 @@ class BatteryOptimizerCoordinator(DataUpdateCoordinator[OptimizationResult | Non
                 "adaptive_load_bias_kw": round(self.adaptive_state.load_bias_kw, 4),
                 "adaptive_charge_response_factor": round(self.adaptive_state.charge_response_factor, 4),
                 "adaptive_discharge_response_factor": round(self.adaptive_state.discharge_response_factor, 4),
+                "load_forecast_history": _serialize_forecast_points(self.load_forecast_history),
             }
         )
 
@@ -1343,6 +1354,56 @@ class BatteryOptimizerCoordinator(DataUpdateCoordinator[OptimizationResult | Non
             for point in input_data.load_forecast
         ]
 
+    def _build_display_fallback_load_forecast(
+        self,
+        display_raw_forecast: list[ForecastPoint],
+        fallback_forecast: list[ForecastPoint],
+        input_data,
+    ) -> list[ForecastPoint]:
+        if display_raw_forecast:
+            fallback_by_start = {point.start: point for point in fallback_forecast}
+            fallback_values = [max(point.load_kw, 0.0) for point in fallback_forecast]
+            default_load_kw = fallback_values[0] if fallback_values else 0.0
+            return [
+                fallback_by_start.get(
+                    point.start,
+                    ForecastPoint(
+                        start=point.start,
+                        load_kw=default_load_kw,
+                        source="optimizer_fallback_display",
+                        samples=0,
+                        profile="fallback",
+                        pattern_kw=default_load_kw,
+                        recent_trend_kw=None,
+                        current_load_kw=point.current_load_kw,
+                        adaptive_bias_kw=0.0,
+                    ),
+                )
+                for point in display_raw_forecast
+            ]
+
+        display_starts = _forecast_display_starts(dt_util.now(), input_data.constraints.interval_minutes)
+        fallback_values = [max(point.load_kw, 0.0) for point in fallback_forecast]
+        default_load_kw = fallback_values[0] if fallback_values else 0.0
+        fallback_by_start = {point.start: point for point in fallback_forecast}
+        return [
+            fallback_by_start.get(
+                start,
+                ForecastPoint(
+                    start=start,
+                    load_kw=default_load_kw,
+                    source="optimizer_fallback_display",
+                    samples=0,
+                    profile="fallback",
+                    pattern_kw=default_load_kw,
+                    recent_trend_kw=None,
+                    current_load_kw=None,
+                    adaptive_bias_kw=0.0,
+                ),
+            )
+            for start in display_starts
+        ]
+
     def _refresh_day_series_histories(self, result: OptimizationResult | None) -> None:
         now = dt_util.now()
         projected_updates = _build_projected_soc_updates(self, result, now)
@@ -1408,6 +1469,63 @@ def _parse_datetime(value: Any) -> datetime | None:
     if parsed is None:
         return None
     return dt_util.as_local(parsed)
+
+
+def _forecast_display_starts(now: datetime, interval_minutes: int, days: int = 2) -> list[datetime]:
+    now_local = dt_util.as_local(now)
+    start = now_local.replace(hour=0, minute=0, second=0, microsecond=0)
+    interval = timedelta(minutes=max(interval_minutes, 1))
+    count = max(int(days * 24 * 60 / max(interval_minutes, 1)), 1)
+    return [start + interval * index for index in range(count)]
+
+
+def _merge_forecast_starts(*groups: list[datetime]) -> list[datetime]:
+    starts = {start for group in groups for start in group}
+    return sorted(starts)
+
+
+def _serialize_forecast_points(points: list[ForecastPoint]) -> list[dict[str, Any]]:
+    return [
+        {
+            "start": point.start.isoformat(),
+            "load_kw": round(point.load_kw, 4),
+            "source": point.source,
+            "samples": point.samples,
+            "profile": point.profile,
+            "pattern_kw": round(point.pattern_kw, 4) if point.pattern_kw is not None else None,
+            "recent_trend_kw": round(point.recent_trend_kw, 4) if point.recent_trend_kw is not None else None,
+            "current_load_kw": round(point.current_load_kw, 4) if point.current_load_kw is not None else None,
+            "adaptive_bias_kw": round(point.adaptive_bias_kw, 4),
+        }
+        for point in points
+    ]
+
+
+def _deserialize_forecast_points(raw: Any) -> list[ForecastPoint]:
+    if not isinstance(raw, list):
+        return []
+    points: list[ForecastPoint] = []
+    for item in raw:
+        if not isinstance(item, dict):
+            continue
+        start = _parse_datetime(item.get("start"))
+        load_kw = _coerce_float_state(item.get("load_kw"))
+        if start is None or load_kw is None:
+            continue
+        points.append(
+            ForecastPoint(
+                start=start,
+                load_kw=load_kw,
+                source=str(item.get("source") or "stored"),
+                samples=int(_coerce_float_state(item.get("samples")) or 0),
+                profile=str(item.get("profile") or "workday"),
+                pattern_kw=_coerce_float_state(item.get("pattern_kw")),
+                recent_trend_kw=_coerce_float_state(item.get("recent_trend_kw")),
+                current_load_kw=_coerce_float_state(item.get("current_load_kw")),
+                adaptive_bias_kw=_coerce_float_state(item.get("adaptive_bias_kw")) or 0.0,
+            )
+        )
+    return sorted(points, key=lambda point: point.start)
 
 
 def _month_key(value: date) -> str:

@@ -210,3 +210,28 @@ def test_merge_forecast_history_preserves_past_points_and_refreshes_future() -> 
     assert merged[0].source == "old"
     assert merged[1].load_kw == 3.0
     assert merged[1].source == "new"
+
+
+def test_merge_forecast_history_backfills_missing_past_points() -> None:
+    now = datetime(2026, 4, 21, 12, 0, tzinfo=timezone.utc)
+    updates = [
+        ForecastPoint(
+            start=datetime(2026, 4, 21, 0, 0, tzinfo=timezone.utc),
+            load_kw=1.5,
+            source="new",
+            samples=4,
+        ),
+        ForecastPoint(
+            start=datetime(2026, 4, 21, 13, 0, tzinfo=timezone.utc),
+            load_kw=3.0,
+            source="new",
+            samples=4,
+        ),
+    ]
+
+    merged = merge_forecast_history([], updates, now)
+
+    assert [point.start for point in merged] == [
+        datetime(2026, 4, 21, 0, 0, tzinfo=timezone.utc),
+        datetime(2026, 4, 21, 13, 0, tzinfo=timezone.utc),
+    ]

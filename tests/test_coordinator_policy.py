@@ -72,6 +72,7 @@ homeassistant_util = sys.modules.setdefault("homeassistant.util", types.ModuleTy
 homeassistant_dt = sys.modules.setdefault("homeassistant.util.dt", types.ModuleType("homeassistant.util.dt"))
 homeassistant_dt.now = lambda: datetime(2026, 4, 25, 12, 0, tzinfo=timezone.utc)
 homeassistant_dt.as_local = lambda value: value
+homeassistant_dt.parse_datetime = lambda value: datetime.fromisoformat(value)
 homeassistant_util.dt = homeassistant_dt
 homeassistant_pkg.const = homeassistant_const
 homeassistant_pkg.config_entries = homeassistant_config_entries
@@ -102,6 +103,10 @@ discharge_command_power_target_kw = coordinator._discharge_command_power_target_
 effective_control_interval = coordinator._effective_control_interval
 effective_display_intervals = coordinator._effective_display_intervals
 continue_active_command_interval = coordinator._continue_active_command_interval
+forecast_display_starts = coordinator._forecast_display_starts
+serialize_forecast_points = coordinator._serialize_forecast_points
+deserialize_forecast_points = coordinator._deserialize_forecast_points
+ForecastPoint = sys.modules["custom_components.battery_optimizer.load_forecast"].ForecastPoint
 
 
 def test_current_tuning_due_only_after_new_quarter_hour_bucket() -> None:
@@ -109,6 +114,37 @@ def test_current_tuning_due_only_after_new_quarter_hour_bucket() -> None:
 
     assert current_tuning_due(datetime(2026, 4, 25, 12, 14, tzinfo=timezone.utc), last_write, 15) is False
     assert current_tuning_due(datetime(2026, 4, 25, 12, 15, tzinfo=timezone.utc), last_write, 15) is True
+
+
+def test_forecast_display_starts_cover_full_today_and_tomorrow() -> None:
+    starts = forecast_display_starts(datetime(2026, 4, 25, 16, 45, tzinfo=timezone.utc), 60)
+
+    assert len(starts) == 48
+    assert starts[0] == datetime(2026, 4, 25, 0, 0, tzinfo=timezone.utc)
+    assert starts[-1] == datetime(2026, 4, 26, 23, 0, tzinfo=timezone.utc)
+
+
+def test_forecast_points_round_trip_for_persistent_history() -> None:
+    points = [
+        ForecastPoint(
+            start=datetime(2026, 4, 25, 8, 0, tzinfo=timezone.utc),
+            load_kw=2.34567,
+            source="history",
+            samples=4,
+            profile="workday",
+            pattern_kw=2.3,
+            recent_trend_kw=2.4,
+            current_load_kw=2.5,
+            adaptive_bias_kw=0.1,
+        )
+    ]
+
+    restored = deserialize_forecast_points(serialize_forecast_points(points))
+
+    assert len(restored) == 1
+    assert restored[0].start == points[0].start
+    assert restored[0].load_kw == 2.3457
+    assert restored[0].source == "history"
 
 
 def test_current_only_power_uses_new_discharge_target_inside_locked_window() -> None:
