@@ -356,6 +356,7 @@ cards:
   - type: entities
     title: Battery Optimizer
     entities:
+      - sensor.battery_optimizer_version
       - sensor.battery_optimizer_planned_mode
       - sensor.battery_optimizer_projected_soc
       - sensor.battery_optimizer_expected_value

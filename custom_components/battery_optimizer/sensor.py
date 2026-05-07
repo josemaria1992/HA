@@ -33,6 +33,7 @@ from .const import (
     DEFAULT_GRID_FEE_PER_KWH,
     DEFAULT_GRID_POWER_ENTITY,
     DOMAIN,
+    VERSION,
 )
 from .coordinator import BatteryOptimizerCoordinator, get_coordinator
 from .ingestion import build_price_comparison
@@ -51,6 +52,15 @@ class BatteryOptimizerSensorDescription(SensorEntityDescription):
 
 
 SENSORS: tuple[BatteryOptimizerSensorDescription, ...] = (
+    BatteryOptimizerSensorDescription(
+        key="version",
+        translation_key="version",
+        value_fn=lambda coordinator: VERSION,
+        attrs_fn=lambda coordinator: {
+            "installed_version": VERSION,
+            "repository": "https://github.com/josemaria1992/HA",
+        },
+    ),
     BatteryOptimizerSensorDescription(
         key="planned_mode",
         translation_key="planned_mode",
@@ -404,6 +414,7 @@ class BatteryOptimizerSensor(CoordinatorEntity[BatteryOptimizerCoordinator], Sen
             or self.entity_description.key.startswith("price_")
             or self.entity_description.key in {"load_forecast", "current_load_kw", "load_forecast_mae", "load_forecast_bias"}
             or self.entity_description.key in {"projected_soc_today", "projected_soc_tomorrow", "projected_soc_schedule"}
+            or self.entity_description.key == "version"
         ):
             return True
         return bool(self.coordinator.data and self.coordinator.data.valid)

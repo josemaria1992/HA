@@ -3,6 +3,7 @@ from __future__ import annotations
 from datetime import datetime, timezone
 from dataclasses import dataclass
 import importlib.util
+import json
 from pathlib import Path
 import sys
 import types
@@ -118,6 +119,14 @@ _current_projected_soc_point = sensor._current_projected_soc_point
 _projected_soc_points_for_day = sensor._projected_soc_points_for_day
 _command_target_soc_points_for_day = sensor._command_target_soc_points_for_day
 _load_forecast_attrs = sensor._load_forecast_attrs
+
+
+def test_version_sensor_matches_manifest_version() -> None:
+    manifest = json.loads((BASE / "manifest.json").read_text())
+    version_description = next(description for description in sensor.SENSORS if description.key == "version")
+
+    assert version_description.value_fn(SimpleNamespace()) == manifest["version"]
+    assert version_description.attrs_fn(SimpleNamespace())["installed_version"] == manifest["version"]
 
 
 def _plan(mode: BatteryMode, projected_soc: float, target_power_kw: float) -> PlanInterval:

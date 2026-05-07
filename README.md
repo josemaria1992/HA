@@ -102,6 +102,7 @@ Before real control is enabled, confirm these values in the config flow:
 Created entities include:
 
 - `sensor.battery_optimizer_planned_mode`
+- `sensor.battery_optimizer_version`
 - `sensor.battery_optimizer_projected_soc`
 - `sensor.battery_optimizer_projected_soc_schedule`
 - `sensor.battery_optimizer_projected_soc_today`
@@ -568,6 +569,7 @@ cards:
   - type: entities
     title: Battery Optimizer
     entities:
+      - entity: sensor.battery_optimizer_version
       - entity: sensor.battery_optimizer_planned_mode
       - entity: sensor.battery_optimizer_projected_soc
       - entity: sensor.battery_optimizer_expected_value

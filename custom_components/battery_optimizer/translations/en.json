@@ -70,6 +70,7 @@
   },
   "entity": {
     "sensor": {
+      "version": { "name": "Version" },
       "planned_mode": { "name": "Planned mode" },
       "projected_soc": { "name": "Projected SOC" },
       "projected_soc_schedule": { "name": "Projected SOC schedule" },
