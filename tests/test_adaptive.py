@@ -146,6 +146,39 @@ def test_compute_command_targets_uses_full_future_charge_goal_not_first_short_ru
     assert targets.target_soc_percent == 90.0
 
 
+def test_compute_command_targets_keeps_charge_target_during_hold_gap() -> None:
+    start = datetime(2026, 4, 21, tzinfo=timezone.utc)
+    targets = compute_command_targets(
+        [
+            _plan(BatteryMode.HOLD, start, 72.0, 0.0),
+            _plan(BatteryMode.CHARGE, start + timedelta(minutes=15), 78.0, 3.0),
+            _plan(BatteryMode.CHARGE, start + timedelta(minutes=30), 90.0, 3.0),
+        ],
+        _constraints(),
+        current_soc_percent=72.0,
+        adaptive_state=AdaptiveState(),
+    )
+
+    assert targets.target_power_kw == 0.0
+    assert targets.target_soc_percent == 90.0
+
+
+def test_compute_command_targets_keeps_discharge_floor_during_hold_gap() -> None:
+    start = datetime(2026, 4, 21, tzinfo=timezone.utc)
+    targets = compute_command_targets(
+        [
+            _plan(BatteryMode.HOLD, start, 72.0, 0.0),
+            _plan(BatteryMode.DISCHARGE, start + timedelta(minutes=15), 65.0, 3.0),
+        ],
+        _constraints(),
+        current_soc_percent=72.0,
+        adaptive_state=AdaptiveState(),
+    )
+
+    assert targets.target_power_kw == 0.0
+    assert targets.target_soc_percent == 10.0
+
+
 def test_compute_command_targets_uses_strategic_charge_target_in_cheap_window() -> None:
     start = datetime(2026, 4, 21, tzinfo=timezone.utc)
     cheap_now = PlanInterval(

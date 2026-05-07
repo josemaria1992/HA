@@ -117,6 +117,7 @@ BatteryConstraints = optimizer.BatteryConstraints
 _current_projected_soc_point = sensor._current_projected_soc_point
 _projected_soc_points_for_day = sensor._projected_soc_points_for_day
 _command_target_soc_points_for_day = sensor._command_target_soc_points_for_day
+_load_forecast_attrs = sensor._load_forecast_attrs
 
 
 def _plan(mode: BatteryMode, projected_soc: float, target_power_kw: float) -> PlanInterval:
@@ -392,3 +393,42 @@ def test_command_target_soc_points_include_active_and_future_targets() -> None:
     assert points[0]["command_target_soc_percent"] == 90
     assert points[0]["source"] == "active_command"
     assert points[1]["command_target_soc_percent"] >= 90
+
+
+def test_load_forecast_attrs_keep_full_today_series_for_charting() -> None:
+    start = datetime(2026, 4, 21, 0, 0, tzinfo=timezone.utc)
+    points = [
+        SimpleNamespace(
+            start=start.replace(hour=0) + sensor.timedelta(minutes=15 * index),
+            load_kw=1.0,
+            source="history",
+            samples=4,
+            profile="workday",
+            pattern_kw=1.0,
+            recent_trend_kw=None,
+            current_load_kw=1.0,
+            adaptive_bias_kw=0.0,
+        )
+        for index in range(96)
+    ]
+    points.extend(
+        SimpleNamespace(
+            start=datetime(2026, 4, 22, 0, 0, tzinfo=timezone.utc) + sensor.timedelta(minutes=15 * index),
+            load_kw=1.5,
+            source="history",
+            samples=4,
+            profile="workday",
+            pattern_kw=1.5,
+            recent_trend_kw=None,
+            current_load_kw=1.0,
+            adaptive_bias_kw=0.0,
+        )
+        for index in range(96)
+    )
+    coordinator = SimpleNamespace(load_forecast_history=points, load_forecast=[])
+
+    attrs = _load_forecast_attrs(coordinator)
+
+    assert len(attrs["forecast"]) == 192
+    assert len(attrs["forecast_today"]) == 96
+    assert len(attrs["forecast_tomorrow"]) == 96

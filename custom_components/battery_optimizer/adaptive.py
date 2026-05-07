@@ -194,6 +194,13 @@ def compute_command_targets(
 
     first = intervals[0]
     if first.mode is BatteryMode.HOLD:
+        hold_gap_target = _hold_gap_target_soc(intervals, constraints)
+        if hold_gap_target is not None:
+            return CommandTargets(
+                target_power_kw=0.0,
+                target_soc_percent=round(hold_gap_target, 1),
+                horizon_intervals=1,
+            )
         return CommandTargets(target_power_kw=0.0, target_soc_percent=round(current_soc_percent, 1), horizon_intervals=1)
 
     same_mode = _same_mode_run(intervals, limit=8)
@@ -232,6 +239,27 @@ def _same_mode_run(intervals: list[PlanInterval], limit: int) -> list[PlanInterv
             break
         run.append(interval)
     return run or [intervals[0]]
+
+
+def _hold_gap_target_soc(intervals: list[PlanInterval], constraints: BatteryConstraints) -> float | None:
+    for interval in intervals[1:8]:
+        if interval.mode is BatteryMode.HOLD:
+            continue
+        if interval.mode is BatteryMode.CHARGE:
+            target_soc = constraints.preferred_max_soc_percent
+            if (
+                constraints.allow_high_price_full_charge
+                and any(
+                    candidate.mode is BatteryMode.CHARGE
+                    and candidate.projected_soc_percent > constraints.preferred_max_soc_percent
+                    for candidate in intervals
+                )
+            ):
+                target_soc = constraints.hard_max_soc_percent
+            return min(target_soc, constraints.hard_max_soc_percent)
+        if interval.mode is BatteryMode.DISCHARGE:
+            return constraints.reserve_soc_percent
+    return None
 
 
 def _ema(previous: float, observed: float, alpha: float) -> float:

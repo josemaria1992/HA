@@ -710,22 +710,51 @@ def _price_comparison_day(coordinator: BatteryOptimizerCoordinator, day_key: str
 
 def _load_forecast_attrs(coordinator: BatteryOptimizerCoordinator) -> dict[str, Any]:
     points = coordinator.load_forecast_history or coordinator.load_forecast
+    display_points = _forecast_points_for_display(points)
+    today = dt_util.now().date()
+    tomorrow = today + timedelta(days=1)
     return {
         "forecast": [
-            {
-                "time": point.start.isoformat(),
-                "load_kw": point.load_kw,
-                "source": point.source,
-                "samples": point.samples,
-                "profile": point.profile,
-                "pattern_kw": point.pattern_kw,
-                "recent_trend_kw": point.recent_trend_kw,
-                "current_load_kw": point.current_load_kw,
-                "adaptive_bias_kw": point.adaptive_bias_kw,
-            }
-            for point in points[:96]
+            _forecast_point_attrs(point)
+            for point in display_points
+        ],
+        "forecast_today": [
+            _forecast_point_attrs(point)
+            for point in display_points
+            if dt_util.as_local(point.start).date() == today
+        ],
+        "forecast_tomorrow": [
+            _forecast_point_attrs(point)
+            for point in display_points
+            if dt_util.as_local(point.start).date() == tomorrow
         ],
         "method": "Forecast first averages recorder history into one value per day and optimizer interval, then prefers weekday-interval history, then workday/weekend-holiday profile history, blends with a rolling recent trend when available, and falls back to current load if history is too thin. Today's and tomorrow's published forecast series is retained across updates so it can be compared visually against actual load throughout the day.",
+    }
+
+
+def _forecast_points_for_display(points) -> list[Any]:
+    today = dt_util.now().date()
+    tomorrow = today + timedelta(days=1)
+    sorted_points = sorted(points, key=lambda point: point.start)
+    current_days = [
+        point
+        for point in sorted_points
+        if dt_util.as_local(point.start).date() in {today, tomorrow}
+    ]
+    return (current_days or sorted_points)[:192]
+
+
+def _forecast_point_attrs(point) -> dict[str, Any]:
+    return {
+        "time": point.start.isoformat(),
+        "load_kw": point.load_kw,
+        "source": point.source,
+        "samples": point.samples,
+        "profile": point.profile,
+        "pattern_kw": point.pattern_kw,
+        "recent_trend_kw": point.recent_trend_kw,
+        "current_load_kw": point.current_load_kw,
+        "adaptive_bias_kw": point.adaptive_bias_kw,
     }
 
 

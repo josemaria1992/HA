@@ -617,6 +617,7 @@ def _optimize_dp(
     constraints = input_data.constraints
     interval_hours = constraints.interval_minutes / 60
     capacity = constraints.capacity_kwh
+    raw_prices = [point.price for point in prices]
     reserve_kwh = capacity * constraints.reserve_soc_percent / 100
     max_soc, _ = _select_charge_ceiling_soc(all_in_prices, constraints)
     max_kwh = capacity * max_soc / 100
@@ -652,6 +653,8 @@ def _optimize_dp(
                     constraints=constraints,
                     interval_hours=interval_hours,
                     load_kwh=load_kwh,
+                    raw_prices=raw_prices,
+                    all_in_prices=all_in_prices,
                     raw_price=prices[index].price,
                     all_in_price=all_in_price,
                     strategy=strategy,
@@ -768,6 +771,8 @@ def _dp_actions(
     constraints: BatteryConstraints,
     interval_hours: float,
     load_kwh: float,
+    raw_prices: list[float],
+    all_in_prices: list[float],
     raw_price: float,
     all_in_price: float,
     strategy: StrategyContext,
@@ -823,6 +828,10 @@ def _dp_actions(
         all_in_price=all_in_price,
         constraints=constraints,
         strategy=strategy,
+        soc_kwh=soc_kwh,
+        max_kwh=max_kwh,
+        raw_prices=raw_prices,
+        all_in_prices=all_in_prices,
     )
 
 
@@ -1028,6 +1037,10 @@ def _filter_actions_for_priority(
     all_in_price: float,
     constraints: BatteryConstraints,
     strategy: StrategyContext,
+    soc_kwh: float,
+    max_kwh: float,
+    raw_prices: list[float],
+    all_in_prices: list[float],
 ) -> list[dict[str, float | BatteryMode | str]]:
     filtered = list(actions)
     charge_available = any(action["mode"] is BatteryMode.CHARGE for action in filtered)
@@ -1044,6 +1057,29 @@ def _filter_actions_for_priority(
     if (index == 0 and strategy.block_discharge_now) or protected_charge_window:
         filtered = [action for action in filtered if action["mode"] is not BatteryMode.DISCHARGE]
 
+    if (
+        all_in_price < strategy.high_threshold
+        and _has_cheaper_future_charge_window_before_peak(
+            index=index,
+            raw_prices=raw_prices,
+            all_in_prices=all_in_prices,
+            constraints=constraints,
+            strategy=strategy,
+        )
+    ):
+        filtered = [action for action in filtered if action["mode"] is not BatteryMode.DISCHARGE]
+
+    if charge_available and _should_wait_for_cheaper_charge_window(
+        index=index,
+        soc_kwh=soc_kwh,
+        max_kwh=max_kwh,
+        raw_prices=raw_prices,
+        all_in_prices=all_in_prices,
+        constraints=constraints,
+        strategy=strategy,
+    ):
+        filtered = [action for action in filtered if action["mode"] is not BatteryMode.CHARGE]
+
     if raw_price <= constraints.very_cheap_spot_price + 0.05 and charge_available:
         hold_only = [action for action in filtered if action["mode"] is BatteryMode.HOLD]
         charge_only = [action for action in filtered if action["mode"] is BatteryMode.CHARGE]
@@ -1053,6 +1089,96 @@ def _filter_actions_for_priority(
     if not filtered:
         return actions
     return filtered
+
+
+def _has_cheaper_future_charge_window_before_peak(
+    *,
+    index: int,
+    raw_prices: list[float],
+    all_in_prices: list[float],
+    constraints: BatteryConstraints,
+    strategy: StrategyContext,
+) -> bool:
+    if index >= len(raw_prices) - 1:
+        return False
+
+    current_raw = raw_prices[index]
+    current_all_in = all_in_prices[index]
+    valuable_threshold = _valuable_future_price_threshold(
+        current_all_in,
+        strategy.high_threshold,
+        strategy.profitable_spread,
+        constraints,
+    )
+    for future_index in range(index + 1, len(raw_prices)):
+        if all_in_prices[future_index] >= valuable_threshold:
+            return False
+        if (
+            raw_prices[future_index] < current_raw - 0.02
+            or all_in_prices[future_index] < current_all_in - 0.02
+        ):
+            return True
+    return False
+
+
+def _should_wait_for_cheaper_charge_window(
+    *,
+    index: int,
+    soc_kwh: float,
+    max_kwh: float,
+    raw_prices: list[float],
+    all_in_prices: list[float],
+    constraints: BatteryConstraints,
+    strategy: StrategyContext,
+) -> bool:
+    """Avoid filling early when cheaper future charging capacity is enough."""
+
+    if index >= len(raw_prices) - 1:
+        return False
+
+    current_raw = raw_prices[index]
+    current_all_in = all_in_prices[index]
+    cheaper_indices = [
+        future_index
+        for future_index in range(index + 1, len(raw_prices))
+        if raw_prices[future_index] < current_raw - 0.02
+        or all_in_prices[future_index] < current_all_in - 0.02
+    ]
+    if not cheaper_indices:
+        return False
+
+    valuable_threshold = _valuable_future_price_threshold(
+        current_all_in,
+        strategy.high_threshold,
+        strategy.profitable_spread,
+        constraints,
+    )
+    deadline_index = len(raw_prices)
+    for future_index in range(index + 1, len(all_in_prices)):
+        if all_in_prices[future_index] >= valuable_threshold:
+            deadline_index = future_index
+            break
+
+    usable_cheaper_indices = [future_index for future_index in cheaper_indices if future_index < deadline_index]
+    if not usable_cheaper_indices:
+        return False
+
+    target_kwh = min(
+        max_kwh,
+        constraints.capacity_kwh * strategy.target_peak_soc_percent / 100,
+    )
+    needed_kwh = max(target_kwh - soc_kwh, 0.0)
+    if needed_kwh <= 0.01:
+        return False
+
+    interval_hours = constraints.interval_minutes / 60
+    cheaper_capacity_kwh = (
+        len(usable_cheaper_indices)
+        * interval_hours
+        * constraints.max_charge_kw
+        * constraints.charge_efficiency
+    )
+    return cheaper_capacity_kwh + 0.05 >= needed_kwh
 
 
 def _dwell_remaining(previous_mode: BatteryMode | None, previous_intervals: int, minimum: int) -> int:

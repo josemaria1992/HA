@@ -384,6 +384,23 @@ def test_active_charge_continues_through_hold_gap_until_target_soc() -> None:
     assert effective.projected_soc_percent == 90
 
 
+def test_active_charge_keeps_stable_target_through_hold_gap_at_target_soc() -> None:
+    interval = _plan(BatteryMode.HOLD, price=1.8)
+    effective = continue_active_command_interval(
+        interval,
+        applied_snapshot=SimpleNamespace(mode=BatteryMode.CHARGE),
+        last_command_target_soc=90.0,
+        planned_command_target_soc=90.0,
+        constraints=_constraints(),
+        current_soc_percent=90.0,
+        live_load_kw=2.0,
+    )
+
+    assert effective.mode is BatteryMode.CHARGE
+    assert effective.target_power_kw == 3
+    assert effective.projected_soc_percent == 90
+
+
 def test_active_discharge_continues_through_hold_gap_above_reserve() -> None:
     interval = _plan(BatteryMode.HOLD, price=2.0)
     effective = continue_active_command_interval(

@@ -1736,17 +1736,16 @@ def _continue_active_command_interval(
 
     if applied_snapshot.mode is BatteryMode.CHARGE:
         target_soc = last_command_target_soc or planned_command_target_soc or constraints.preferred_max_soc_percent
-        if current_soc_percent + 0.5 < target_soc:
-            return replace(
-                interval,
-                mode=BatteryMode.CHARGE,
-                target_power_kw=constraints.max_charge_kw,
-                projected_soc_percent=max(interval.projected_soc_percent, target_soc),
-                reason=(
-                    f"{interval.reason} Continuing the active charge command until SOC reaches "
-                    f"{target_soc:.0f}% instead of writing 0A during a hold gap."
-                ),
-            )
+        return replace(
+            interval,
+            mode=BatteryMode.CHARGE,
+            target_power_kw=constraints.max_charge_kw,
+            projected_soc_percent=max(interval.projected_soc_percent, target_soc),
+            reason=(
+                f"{interval.reason} Continuing the active charge command with the stable "
+                f"{target_soc:.0f}% SOC target instead of writing a hold gap target."
+            ),
+        )
 
     if applied_snapshot.mode is BatteryMode.DISCHARGE:
         discharge_load_kw = max(live_load_kw if live_load_kw is not None else interval.load_kw, 0.0)

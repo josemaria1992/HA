@@ -90,6 +90,15 @@ def test_cheap_now_but_cheaper_later_can_wait_without_discharging() -> None:
     assert result.intervals[0].mode is not BatteryMode.DISCHARGE
 
 
+def test_positive_cheap_price_waits_for_negative_charge_window() -> None:
+    result = optimize(_input([0.8, 0.7, -0.3, -0.2, 3.2, 3.3], soc=12))
+
+    assert result.valid
+    assert result.intervals[0].mode is BatteryMode.HOLD
+    assert result.intervals[1].mode is BatteryMode.HOLD
+    assert result.intervals[2].mode is BatteryMode.CHARGE
+
+
 def test_fallback_mode_still_charges_for_later_peak() -> None:
     result = optimize(
         _input([0.6, 0.7, 3.2, 3.1], soc=20, loads=[0.8, 0.8, 2.0, 2.0], load_reliable=False)

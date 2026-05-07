@@ -550,14 +550,10 @@ cards:
         type: line
         curve: stepline
         data_generator: |
-          const points = entity?.attributes?.forecast || [];
-          const startOfToday = new Date();
-          startOfToday.setHours(0, 0, 0, 0);
-          return points
-            .filter((point) => new Date(point.time) >= startOfToday)
-            .map((point) => {
-              return [new Date(point.time).getTime(), point.load_kw];
-            });
+          const points = entity?.attributes?.forecast_today || entity?.attributes?.forecast || [];
+          return points.map((point) => {
+            return [new Date(point.time).getTime(), point.load_kw];
+          });
 
   - type: entities
     title: Projected Coming Window
