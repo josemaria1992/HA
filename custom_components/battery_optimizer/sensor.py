@@ -870,31 +870,40 @@ def _projected_soc_points_for_day(coordinator: BatteryOptimizerCoordinator, day_
     if not coordinator.data:
         return points
     intervals = _display_intervals(coordinator)
+    input_constraints = getattr(coordinator, "_last_input_constraints", None)
+    actual_soc = _current_actual_soc_percent(coordinator)
+    running_soc = actual_soc if actual_soc is not None and intervals else (
+        intervals[0].projected_soc_percent if intervals else None
+    )
+    charge_target_active = False
     for interval_index, interval in enumerate(intervals):
         local_start = dt_util.as_local(interval.start)
-        if local_start.date() != target_day:
-            continue
         projected_soc = interval.projected_soc_percent
-        input_constraints = getattr(coordinator, "_last_input_constraints", None)
         if interval.mode is not BatteryMode.HOLD and input_constraints is not None:
-            actual_soc = _current_actual_soc_percent(coordinator)
-            running_soc = actual_soc if actual_soc is not None else interval.projected_soc_percent
             command_targets = compute_command_targets(
                 intervals[interval_index:],
                 input_constraints,
-                running_soc,
+                running_soc if running_soc is not None else interval.projected_soc_percent,
                 coordinator.adaptive_state,
             )
             projected_soc = command_targets.target_soc_percent
-        points.append(
-            {
-                "time": local_start.isoformat(),
-                "projected_soc_percent": _display_soc(projected_soc),
-                "mode": interval.mode.value,
-                "target_power_kw": interval.target_power_kw,
-                "price": interval.price,
-            }
-        )
+        if interval.mode is BatteryMode.CHARGE:
+            charge_target_active = True
+        elif interval.mode is BatteryMode.DISCHARGE:
+            charge_target_active = False
+        elif charge_target_active and running_soc is not None:
+            projected_soc = max(projected_soc, running_soc)
+        if local_start.date() == target_day:
+            points.append(
+                {
+                    "time": local_start.isoformat(),
+                    "projected_soc_percent": _display_soc(projected_soc),
+                    "mode": interval.mode.value,
+                    "target_power_kw": interval.target_power_kw,
+                    "price": interval.price,
+                }
+            )
+        running_soc = projected_soc
     return points
 
 

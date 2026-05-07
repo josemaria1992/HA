@@ -267,6 +267,52 @@ def test_projected_soc_points_show_charge_command_ceiling() -> None:
     assert points[0]["projected_soc_percent"] == 90
 
 
+def test_projected_soc_points_keep_charge_target_flat_through_hold_gap() -> None:
+    constraints = BatteryConstraints(
+        capacity_kwh=32.14,
+        soc_percent=35.0,
+        reserve_soc_percent=10,
+        preferred_max_soc_percent=90,
+        hard_max_soc_percent=100,
+        max_charge_kw=3.0,
+        max_discharge_kw=3.0,
+        charge_efficiency=0.95,
+        discharge_efficiency=0.95,
+        degradation_cost_per_kwh=0.01,
+        grid_fee_per_kwh=0.773,
+        interval_minutes=60,
+        min_dwell_intervals=0,
+        price_hysteresis=0.01,
+        very_cheap_spot_price=0.1,
+        cheap_effective_price=1.5,
+        expensive_effective_price=2.5,
+        optimizer_aggressiveness="balanced",
+    )
+    now = sensor.dt_util.now()
+    charge_interval = _plan(BatteryMode.CHARGE, projected_soc=54.0, target_power_kw=3.0)
+    hold_interval = _plan(BatteryMode.HOLD, projected_soc=54.0, target_power_kw=0.0)
+    hold_interval.start = now + sensor.timedelta(minutes=15)
+    coordinator = SimpleNamespace(
+        projected_soc_history=[],
+        planned_command_target_soc=90.0,
+        last_command_target_soc=None,
+        planned_command_target_power_kw=3.0,
+        last_command_target_power_kw=None,
+        _applied_snapshot=None,
+        _applied_plan=None,
+        data=SimpleNamespace(intervals=[charge_interval, hold_interval]),
+        _is_control_window_locked=lambda: False,
+        _last_input_constraints=constraints,
+        adaptive_state=adaptive.AdaptiveState(),
+        config={"battery_soc_entity": "sensor.inverter_battery"},
+        hass=SimpleNamespace(states=SimpleNamespace(get=lambda entity_id: SimpleNamespace(state="35.0"))),
+    )
+
+    points = _projected_soc_points_for_day(coordinator, "today")
+
+    assert [point["projected_soc_percent"] for point in points[-2:]] == [90, 90]
+
+
 def test_projected_soc_points_show_discharge_floor() -> None:
     constraints = BatteryConstraints(
         capacity_kwh=32.14,
@@ -405,7 +451,7 @@ def test_command_target_soc_points_include_active_and_future_targets() -> None:
 
 
 def test_load_forecast_attrs_keep_full_today_series_for_charting() -> None:
-    start = datetime(2026, 4, 21, 0, 0, tzinfo=timezone.utc)
+    start = sensor.dt_util.now().replace(hour=0, minute=0, second=0, microsecond=0)
     points = [
         SimpleNamespace(
             start=start.replace(hour=0) + sensor.timedelta(minutes=15 * index),
@@ -422,7 +468,7 @@ def test_load_forecast_attrs_keep_full_today_series_for_charting() -> None:
     ]
     points.extend(
         SimpleNamespace(
-            start=datetime(2026, 4, 22, 0, 0, tzinfo=timezone.utc) + sensor.timedelta(minutes=15 * index),
+            start=start + sensor.timedelta(days=1, minutes=15 * index),
             load_kw=1.5,
             source="history",
             samples=4,

@@ -1167,6 +1167,9 @@ class BatteryOptimizerCoordinator(DataUpdateCoordinator[OptimizationResult | Non
             constraints=self._last_input_constraints,
             current_soc_percent=current_soc,
             live_load_kw=_read_kw(self.hass, self.config.get(CONF_LOAD_POWER_ENTITY)),
+            applied_snapshot=self._applied_snapshot,
+            last_command_target_soc=self.last_command_target_soc,
+            planned_command_target_soc=self.planned_command_target_soc,
         )
 
     def _current_only_plan(self, planned_interval: PlanInterval) -> PlanInterval:
@@ -1780,6 +1783,9 @@ def _effective_display_intervals(
     constraints: Any,
     current_soc_percent: float,
     live_load_kw: float | None,
+    applied_snapshot: CommandSnapshot | None = None,
+    last_command_target_soc: float | None = None,
+    planned_command_target_soc: float | None = None,
 ) -> list[PlanInterval]:
     display: list[PlanInterval] = []
     running_soc = current_soc_percent
@@ -1794,11 +1800,30 @@ def _effective_display_intervals(
             current_soc_percent=running_soc,
             live_load_kw=live_load_kw if index == 0 else None,
         )
+        if index == 0:
+            effective = _continue_active_command_interval(
+                effective,
+                applied_snapshot=applied_snapshot,
+                last_command_target_soc=last_command_target_soc,
+                planned_command_target_soc=planned_command_target_soc,
+                constraints=constraints,
+                current_soc_percent=current_soc_percent,
+                live_load_kw=live_load_kw,
+            )
         if effective.mode is BatteryMode.CHARGE or _is_charge_opportunity(effective, constraints):
             charge_valley_active = True
         elif _is_discharge_opportunity(effective, constraints):
             charge_valley_active = False
 
+        if effective.mode is BatteryMode.CHARGE:
+            target_soc = charge_target_soc
+            if index == 0 and applied_snapshot is not None and applied_snapshot.mode is BatteryMode.CHARGE:
+                target_soc = last_command_target_soc or planned_command_target_soc or charge_target_soc
+            effective = replace(
+                effective,
+                projected_soc_percent=max(effective.projected_soc_percent, target_soc),
+                reason=f"{effective.reason} Displayed at the stable charge target SOC.",
+            )
         if charge_valley_active and effective.mode is BatteryMode.HOLD:
             effective = replace(
                 effective,
@@ -2031,7 +2056,7 @@ def _build_projected_soc_updates(
             "source": "active_command" if coordinator._is_control_window_locked() else "planned_interval",
         }
     )
-    running_soc = current_interval.projected_soc_percent
+    running_soc = current_soc
     for index, interval in enumerate(intervals[1:], start=1):
         projected_soc = interval.projected_soc_percent
         if interval.mode is not BatteryMode.HOLD and coordinator._last_input_constraints is not None:
@@ -2052,7 +2077,7 @@ def _build_projected_soc_updates(
                 "source": "planned_interval",
             }
         )
-        running_soc = interval.projected_soc_percent
+        running_soc = projected_soc
     return updates
 
 
@@ -2090,7 +2115,10 @@ def _build_command_target_updates(
     running_soc = actual_soc if actual_soc is not None else intervals[0].projected_soc_percent
     for index, interval in enumerate(intervals):
         if index == 0:
-            running_soc = interval.projected_soc_percent
+            if current_target_soc is not None:
+                running_soc = current_target_soc
+            else:
+                running_soc = interval.projected_soc_percent
             continue
         command_targets = compute_command_targets(
             intervals[index:],
@@ -2107,7 +2135,7 @@ def _build_command_target_updates(
                 "source": "planned_command",
             }
         )
-        running_soc = interval.projected_soc_percent
+        running_soc = command_targets.target_soc_percent
     return updates
 
 

@@ -352,6 +352,26 @@ def test_display_intervals_keep_charge_valley_soc_flat() -> None:
     assert [interval.projected_soc_percent for interval in display] == [90.0, 90.0, 90.0]
 
 
+def test_display_intervals_lift_partial_charge_projection_to_stable_target() -> None:
+    intervals = [
+        _plan(BatteryMode.CHARGE, price=1.0),
+        _plan(BatteryMode.HOLD, price=1.1),
+        _plan(BatteryMode.HOLD, price=1.2),
+    ]
+    intervals[0].projected_soc_percent = 54.0
+    intervals[1].projected_soc_percent = 54.0
+    intervals[2].projected_soc_percent = 53.0
+
+    display = effective_display_intervals(
+        intervals,
+        constraints=_constraints(),
+        current_soc_percent=45.0,
+        live_load_kw=2.0,
+    )
+
+    assert [interval.projected_soc_percent for interval in display] == [90.0, 90.0, 90.0]
+
+
 def test_display_intervals_show_discharge_at_reserve_floor() -> None:
     interval = _plan(BatteryMode.DISCHARGE, price=3.0)
     interval.projected_soc_percent = 65.0
