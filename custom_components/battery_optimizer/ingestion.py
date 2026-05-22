@@ -171,7 +171,7 @@ class DataIngestor:
                 f"Averaged {source_interval_minutes}-minute Nord Pool prices into {interval_minutes}-minute supplier billing prices."
             )
         start = now.replace(hour=0, minute=0, second=0, microsecond=0)
-        current_window_start = now.replace(minute=0, second=0, microsecond=0)
+        current_window_start = _interval_window_start(now, interval_minutes)
         points: list[PricePoint] = []
         for index, price in enumerate(prices):
             point_start = start + timedelta(minutes=index * interval_minutes)
@@ -402,3 +402,13 @@ def _aggregate_prices(values: list[float], source_interval_minutes: int, target_
         if len(chunk) == chunk_size:
             aggregated.append(sum(chunk) / len(chunk))
     return aggregated
+
+
+def _interval_window_start(moment: datetime, interval_minutes: int) -> datetime:
+    """Return the start of the current optimizer interval."""
+
+    interval = max(interval_minutes, 1)
+    day_start = moment.replace(hour=0, minute=0, second=0, microsecond=0)
+    minutes_since_midnight = moment.hour * 60 + moment.minute
+    bucket_start_minutes = (minutes_since_midnight // interval) * interval
+    return day_start + timedelta(minutes=bucket_start_minutes)

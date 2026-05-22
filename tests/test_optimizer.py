@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from dataclasses import replace
 from datetime import datetime, timedelta, timezone
 import importlib.util
 from pathlib import Path
@@ -61,15 +62,23 @@ def _input(
     load_reliable: bool = True,
     max_charge_kw: float = 3,
     max_discharge_kw: float = 3,
+    previous_mode: BatteryMode | None = None,
+    previous_mode_intervals: int = 0,
+    min_dwell_intervals: int = 0,
 ) -> OptimizationInput:
     start = datetime(2026, 4, 20, tzinfo=timezone.utc)
     loads = loads or [1.5] * len(prices)
+    constraints = _constraints(soc=soc, max_charge_kw=max_charge_kw, max_discharge_kw=max_discharge_kw)
+    if min_dwell_intervals:
+        constraints = replace(constraints, min_dwell_intervals=min_dwell_intervals)
     return OptimizationInput(
         generated_at=start,
         prices=[PricePoint(start + timedelta(hours=index), price) for index, price in enumerate(prices)],
         load_forecast=[LoadPoint(start + timedelta(hours=index), load) for index, load in enumerate(loads)],
-        constraints=_constraints(soc=soc, max_charge_kw=max_charge_kw, max_discharge_kw=max_discharge_kw),
+        constraints=constraints,
         load_forecast_reliable=load_reliable,
+        previous_mode=previous_mode,
+        previous_mode_intervals=previous_mode_intervals,
     )
 
 
@@ -163,6 +172,40 @@ def test_charge_valley_does_not_drop_soc_between_charge_slots() -> None:
     ]
     valley_soc = [interval.projected_soc_percent for interval in result.intervals[:4]]
     assert valley_soc == sorted(valley_soc)
+
+
+def test_dwell_keeps_active_charge_available_in_cheap_window() -> None:
+    result = optimize(
+        _input(
+            [0.0, 0.0, 0.0, 3.2],
+            soc=20,
+            loads=[2.0, 2.0, 2.0, 2.0],
+            previous_mode=BatteryMode.CHARGE,
+            previous_mode_intervals=1,
+            min_dwell_intervals=2,
+        )
+    )
+
+    assert result.valid
+    assert result.intervals[0].mode is BatteryMode.CHARGE
+    assert result.intervals[0].projected_soc_percent > 20
+
+
+def test_dwell_keeps_active_discharge_available_in_expensive_window() -> None:
+    result = optimize(
+        _input(
+            [3.2, 3.1, 0.2, 0.2],
+            soc=80,
+            loads=[2.0, 2.0, 2.0, 2.0],
+            previous_mode=BatteryMode.DISCHARGE,
+            previous_mode_intervals=1,
+            min_dwell_intervals=2,
+        )
+    )
+
+    assert result.valid
+    assert result.intervals[0].mode is BatteryMode.DISCHARGE
+    assert result.intervals[0].projected_soc_percent < 80
 
 
 def test_no_export_discharge_is_clamped_to_load() -> None:

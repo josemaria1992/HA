@@ -642,22 +642,28 @@ def _optimize_dp(
         next_dp: dict[float, tuple[float, list[dict[str, float | BatteryMode | str]]]] = {}
 
         for soc_kwh, (cost_so_far, actions) in dp.items():
+            candidates = _dp_actions(
+                index=index,
+                soc_kwh=soc_kwh,
+                reserve_kwh=reserve_kwh,
+                max_kwh=max_kwh,
+                constraints=constraints,
+                interval_hours=interval_hours,
+                load_kwh=load_kwh,
+                raw_prices=raw_prices,
+                all_in_prices=all_in_prices,
+                raw_price=prices[index].price,
+                all_in_price=all_in_price,
+                strategy=strategy,
+            )
             if index < initial_dwell_remaining:
-                candidates = [_dp_hold_action(soc_kwh, load_kwh, all_in_price, "Holding to satisfy minimum dwell time.")]
-            else:
-                candidates = _dp_actions(
-                    index=index,
+                candidates = _apply_dwell_to_candidates(
+                    candidates,
+                    previous_mode=input_data.previous_mode,
+                    dwell_remaining=initial_dwell_remaining - index,
                     soc_kwh=soc_kwh,
-                    reserve_kwh=reserve_kwh,
-                    max_kwh=max_kwh,
-                    constraints=constraints,
-                    interval_hours=interval_hours,
                     load_kwh=load_kwh,
-                    raw_prices=raw_prices,
-                    all_in_prices=all_in_prices,
-                    raw_price=prices[index].price,
                     all_in_price=all_in_price,
-                    strategy=strategy,
                 )
             for candidate in candidates:
                 next_soc = _quantize(float(candidate["next_soc_kwh"]), step, reserve_kwh, max_kwh)
@@ -1193,3 +1199,45 @@ def _apply_dwell(previous_mode: BatteryMode | None, requested: BatteryMode, dwel
     if previous_mode is not None and requested is not previous_mode and requested is not BatteryMode.HOLD:
         return BatteryMode.HOLD
     return requested
+
+
+def _apply_dwell_to_candidates(
+    candidates: list[dict[str, float | BatteryMode | str]],
+    *,
+    previous_mode: BatteryMode | None,
+    dwell_remaining: int,
+    soc_kwh: float,
+    load_kwh: float,
+    all_in_price: float,
+) -> list[dict[str, float | BatteryMode | str]]:
+    """Keep same-mode actions available while blocking direct mode reversals."""
+
+    adjusted: list[dict[str, float | BatteryMode | str]] = []
+    seen_modes: set[BatteryMode] = set()
+    for candidate in candidates:
+        requested = candidate["mode"]
+        assert isinstance(requested, BatteryMode)
+        allowed = _apply_dwell(previous_mode, requested, dwell_remaining)
+        if allowed is requested:
+            adjusted.append(candidate)
+            seen_modes.add(requested)
+            continue
+        if BatteryMode.HOLD in seen_modes:
+            continue
+        adjusted.append(
+            _dp_hold_action(
+                soc_kwh,
+                load_kwh,
+                all_in_price,
+                "Holding to satisfy minimum dwell time before changing active mode.",
+            )
+        )
+        seen_modes.add(BatteryMode.HOLD)
+    return adjusted or [
+        _dp_hold_action(
+            soc_kwh,
+            load_kwh,
+            all_in_price,
+            "Holding to satisfy minimum dwell time.",
+        )
+    ]
